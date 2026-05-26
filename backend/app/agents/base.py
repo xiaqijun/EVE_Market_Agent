@@ -1,0 +1,40 @@
+from dataclasses import dataclass, field
+from app.services.llm_service import llm_service
+from app.services.cost_tracker import cost_tracker
+
+
+@dataclass
+class AgentContext:
+    user_id: str
+    session_id: str
+    user_profile: dict | None = None
+    conversation_history: list[dict] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+
+class BaseAgent:
+    alias: str = "deepseek"
+    allowed_tools: list[str] = []
+    fallback_mode: str = "rules_only"
+
+    async def run(self, context: AgentContext, input_data: dict) -> dict:
+        if cost_tracker.is_over_budget():
+            return await self._fallback(context, input_data)
+        try:
+            return await self._run(context, input_data)
+        except Exception:
+            return await self._fallback(context, input_data)
+
+    async def _run(self, context: AgentContext, input_data: dict) -> dict:
+        raise NotImplementedError
+
+    async def _fallback(self, context: AgentContext, input_data: dict) -> dict:
+        return {"error": "agent_unavailable", "mode": self.fallback_mode}
+
+    async def _llm_chat(self, system_prompt: str, user_message: str, **kwargs) -> str:
+        if cost_tracker.is_over_budget():
+            raise Exception("LLM budget exceeded")
+        return await llm_service.chat(self.alias, [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ], **kwargs)
