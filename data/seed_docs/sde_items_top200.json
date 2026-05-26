@@ -1,0 +1,27 @@
+[
+  {
+    "title": "三钛合金 (Tritanium)",
+    "content": "物品名称: 三钛合金 (Tritanium)\n物品分组: 矿物 → 基础矿物\n物品分类: 原材料\n体积: 0.01 m³\n基础价格: 2.00 ISK\n描述: Tritanium 是宇宙中储量最丰富的矿物之一，大量应用于各种基础建造项目中。\n主要用途: 建造基础舰船、弹药、无人机、建筑模块的核心原材料。",
+    "source": "sde", "doc_type": "item_desc", "related_item_groups": [4], "language": "zh"
+  },
+  {
+    "title": "类晶体胶矿 (Pyerite)",
+    "content": "物品名称: 类晶体胶矿 (Pyerite)\n物品分组: 矿物 → 基础矿物\n物品分类: 原材料\n体积: 0.01 m³\n基础价格: 4.00 ISK\n描述: Pyerite 是许多中级制造项目中的重要组成部分。\n主要用途: 建造中型舰船、无人机和装备模块。",
+    "source": "sde", "doc_type": "item_desc", "related_item_groups": [4], "language": "zh"
+  },
+  {
+    "title": "伊甸币 (PLEX)",
+    "content": "物品名称: PLEX (30 天 Omega 时间)\n物品分组: 服务 → 可交易物品\n物品分类: 服务\n体积: 0.01 m³\n描述: PLEX 可用于延长游戏时间（30 天 Omega 状态）或在游戏内交易。\n主要用途: 游戏时间充值、投资标的、保值手段。",
+    "source": "sde", "doc_type": "item_desc", "related_item_groups": [10], "language": "zh"
+  },
+  {
+    "title": "超噬铁 (Megacyte)",
+    "content": "物品名称: 超噬铁 (Megacyte)\n物品分组: 矿物 → 高级矿物\n物品分类: 原材料\n体积: 0.01 m³\n基础价格: 500.00 ISK\n描述: Megacyte 是制造高级舰船和 T2 装备的核心原材料。\n主要用途: T2 舰船制造、高级装备模块、旗舰组件。",
+    "source": "sde", "doc_type": "item_desc", "related_item_groups": [4], "language": "zh"
+  },
+  {
+    "title": "损伤控制 II (Damage Control II)",
+    "content": "物品名称: 损伤控制 II\n物品分组: 船体升级 → 损伤控制\n物品分类: 装备模块\n体积: 5.00 m³\n描述: 通过优化护盾和装甲的能量分配来增强舰船的防御能力。\n主要用途: PVP 标配装备，几乎所有战斗舰船都需要。",
+    "source": "sde", "doc_type": "item_desc", "related_item_groups": [124], "language": "zh"
+  }
+]

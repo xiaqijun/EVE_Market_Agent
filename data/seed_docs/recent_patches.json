@@ -1,0 +1,17 @@
+[
+  {
+    "title": "Equinox 版本更新 — 矿物市场影响",
+    "content": "Equinox 版本调整了部分舰船制造蓝图的矿物需求。Tritanium（三钛合金）和 Pyerite（类晶体胶矿）需求略微上升，导致主要贸易中心价格短期内上涨 5-10%。Mexallon 和 Isogen 需求基本持平。建议关注后续补丁的微调。",
+    "source": "seed", "doc_type": "patch_note", "version": "Equinox", "language": "zh"
+  },
+  {
+    "title": "Equinox 版本 — 新舰船上线",
+    "content": "Equinox 版本引入了数款新型舰船，包括新的 T2 护卫舰和巡洋舰。新舰船的制造需求可能推动相关原材料（高级矿物、T2 组件）价格上涨。制造材料列表已在 SDE 中更新。",
+    "source": "seed", "doc_type": "patch_note", "version": "Equinox", "language": "zh"
+  },
+  {
+    "title": "市场 UI 改进说明",
+    "content": "最近的版本更新改进了市场界面，增加了高级订单筛选和批量购买功能。这些 UI 改进不影响市场机制本身，但可能提高交易效率并略微增加市场流动性。对套利策略没有直接影响。",
+    "source": "seed", "doc_type": "patch_note", "version": "Equinox", "language": "zh"
+  }
+]

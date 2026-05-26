@@ -1,0 +1,27 @@
+[
+  {
+    "title": "EVE 市场交易基础",
+    "content": "EVE Online 的市场是一个完全由玩家驱动的经济系统。玩家可以在任何有市场服务的空间站挂单买卖物品。市场订单分为买单和卖单：买单表示玩家愿意以某个价格购买物品，卖单表示玩家愿意以某个价格出售物品。市场价格由供需关系决定，不同区域之间的物价可能存在显著差异。",
+    "source": "seed", "doc_type": "mechanic", "related_item_groups": [], "language": "zh"
+  },
+  {
+    "title": "中介费和销售税机制",
+    "content": "市场交易涉及两种费用：中介费和销售税。中介费在创建买单时收取，基础费率为订单总价值的 2%，可通过 Broker Relations 技能降低至 1%。销售税在物品售出时收取，基础税率为交易额的 1.5%，可通过 Accounting 技能降低至 0.75%。NPC 空间站和玩家建筑的税率可能不同。",
+    "source": "seed", "doc_type": "mechanic", "related_item_groups": [], "language": "zh"
+  },
+  {
+    "title": "区域间套利策略",
+    "content": "区域间套利是利用不同空间站或星域之间的价格差异来获利。常见的套利路线包括：Jita（加达里四大贸易中心）与 Amarr、Dodixie、Rens、Hek 之间的物品运输。套利利润需要考虑运输成本、安全性、物品体积和市场竞争程度。高体积低价值的物品（如矿物）需要大量运输才有可观利润。",
+    "source": "seed", "doc_type": "strategy", "related_item_groups": [], "language": "zh"
+  },
+  {
+    "title": "长期投资策略",
+    "content": "EVE 中的长期投资策略包括：1）囤积季节性需求物品（如 PLEX 在促销后往往价格回升）；2）追踪 CCP 版本更新对物品供需的影响；3）投资被低估的技能书和蓝图；4）关注大型战争对矿物和舰船价格的影响。投资需要耐心和对游戏机制的深入理解。",
+    "source": "seed", "doc_type": "strategy", "related_item_groups": [], "language": "zh"
+  },
+  {
+    "title": "市场成交量分析",
+    "content": "成交量是评估市场机会的重要指标。日均成交量高的物品流动性好，买卖价差通常较小但更稳定。低成交量物品可能有更高的利润率，但成交速度慢、风险更大。建议使用成交量加权均价（VWAP）来估算大额交易的真实成本，避免被小额的极端挂单价误导。",
+    "source": "seed", "doc_type": "strategy", "related_item_groups": [], "language": "zh"
+  }
+]

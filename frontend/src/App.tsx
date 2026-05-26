@@ -1,9 +1,17 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './providers/AuthProvider'
+import { WebSocketProvider } from './providers/WebSocketProvider'
+import { NotificationProvider } from './providers/NotificationProvider'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import LoginPage from './pages/LoginPage'
+import OpportunitiesPage from './pages/OpportunitiesPage'
+import OpportunityDetail from './pages/OpportunityDetail'
+import ChatPage from './pages/ChatPage'
+import PortfolioPage from './pages/PortfolioPage'
+import TradesPage from './pages/TradesPage'
+import SettingsPage from './pages/SettingsPage'
 
 const queryClient = new QueryClient()
 
@@ -12,12 +20,22 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route element={<Layout />}>
-              <Route path="/" element={<Dashboard />} />
-            </Route>
-          </Routes>
+          <WebSocketProvider>
+            <NotificationProvider>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route element={<Layout />}>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/opportunities" element={<OpportunitiesPage />} />
+                  <Route path="/opportunities/:id" element={<OpportunityDetail />} />
+                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/portfolio" element={<PortfolioPage />} />
+                  <Route path="/trades" element={<TradesPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Route>
+              </Routes>
+            </NotificationProvider>
+          </WebSocketProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

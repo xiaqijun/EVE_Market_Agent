@@ -1,0 +1,17 @@
+[
+  {
+    "title": "大规模战争对矿物市场的影响案例",
+    "content": "历史案例：2023 年大型联盟战争期间，Tritanium 和 Pyerite 价格在 Jita 上涨 30-50%。战争消耗大量 T1 舰船，推动了基础矿物需求。同时，Nocxium 和 Megacyte 等高级矿物价格也上涨，因为 T2 舰船制造需求增加。战争结束后 2-3 个月内价格逐步回归正常。",
+    "source": "seed", "doc_type": "event", "language": "zh"
+  },
+  {
+    "title": "PLEX 价格波动历史",
+    "content": "PLEX（伊甸币）价格通常在 CCP 举办促销活动（如 Omega 订阅折扣、技能点促销）后短期内下跌 5-15%，随后在 1-3 个月内回升。长期来看，PLEX 价格与游戏活跃玩家数量正相关。PLEX 也是 EVE 中最重要的投机标的之一。",
+    "source": "seed", "doc_type": "event", "language": "zh"
+  },
+  {
+    "title": "技能注入器市场周期",
+    "content": "技能注入器允许玩家从角色提取技能点并出售。价格波动与大型联盟需求、版本更新和 CCP 促销活动密切相关。通常在大型战争前价格上升（联盟需要快速培养特定技能飞行员），在促销活动后短期下降。",
+    "source": "seed", "doc_type": "event", "language": "zh"
+  }
+]
