@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"E:\\\\github\\\\EVE_Market_Agent\" -Depth 2)",
+      "Bash(Select-Object Mode, Name)",
+      "Bash(C:\\\\Users\\\\xiaqi\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.1.0\\\\skills\\\\brainstorming\\\\scripts\\\\start-server.sh *)",
+      "Skill(frontend-design:frontend-design)",
+      "PowerShell(New-Item *)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:subagent-driven-development)",
+      "Bash(git init *)",
+      "Bash(pip install *)",
+      "Bash(alembic init *)",
+      "PowerShell(python --version 2>&1; python -m pip --version 2>&1)"
+    ]
+  }
+}

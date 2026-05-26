@@ -1,0 +1,21 @@
+aliases:
+  opus:
+    provider: anthropic
+    model: claude-opus-4-20250514
+    fallback: sonnet
+  sonnet:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    fallback: deepseek
+  deepseek:
+    provider: deepseek
+    model: deepseek-chat
+    fallback: gpt4o-mini
+  gpt4o-mini:
+    provider: openai
+    model: gpt-4o-mini
+    fallback: null
+  haiku:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    fallback: deepseek
