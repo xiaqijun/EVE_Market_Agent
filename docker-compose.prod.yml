@@ -1,0 +1,73 @@
+# Production overrides — use WITH the base docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file:
+# - Uses pre-built GHCR images instead of building locally
+# - Enables Docker secrets for sensitive values
+# - Adds the deploy-webhook service
+
+services:
+  backend:
+    build: !reset null
+    image: ghcr.io/${GITHUB_REPOSITORY:-owner/eve-market-agent}-backend:latest
+    secrets:
+      - jwt_secret
+      - encryption_key
+      - anthropic_api_key
+      - openai_api_key
+      - deepseek_api_key
+    environment:
+      - JWT_SECRET=/run/secrets/jwt_secret
+      - ENCRYPTION_KEY=/run/secrets/encryption_key
+
+  frontend:
+    build: !reset null
+    image: ghcr.io/${GITHUB_REPOSITORY:-owner/eve-market-agent}-frontend:latest
+
+  worker:
+    build: !reset null
+    image: ghcr.io/${GITHUB_REPOSITORY:-owner/eve-market-agent}-backend:latest
+    secrets:
+      - jwt_secret
+      - encryption_key
+    environment:
+      - JWT_SECRET=/run/secrets/jwt_secret
+      - ENCRYPTION_KEY=/run/secrets/encryption_key
+
+  beat:
+    build: !reset null
+    image: ghcr.io/${GITHUB_REPOSITORY:-owner/eve-market-agent}-backend:latest
+    secrets:
+      - jwt_secret
+      - encryption_key
+    environment:
+      - JWT_SECRET=/run/secrets/jwt_secret
+      - ENCRYPTION_KEY=/run/secrets/encryption_key
+
+  # Webhook receiver for automated deployment
+  deploy-webhook:
+    build:
+      context: ./backend
+    image: ghcr.io/${GITHUB_REPOSITORY:-owner/eve-market-agent}-backend:latest
+    command: python scripts/deploy-webhook.py
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/app/scripts:ro
+    restart: always
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  encryption_key:
+    file: ./secrets/encryption_key.txt
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  deepseek_api_key:
+    file: ./secrets/deepseek_api_key.txt

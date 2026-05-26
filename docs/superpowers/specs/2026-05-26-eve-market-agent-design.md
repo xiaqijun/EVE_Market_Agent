@@ -440,3 +440,51 @@ aliases:
 - 密钥管理: 生产部署文档指引使用 Docker secrets 或 HashiCorp Vault
 - 备份: docker compose 包含自动 pg_dump 备份容器
 - 未来扩展: 架构天然支持拆分 (Agent → 独立服务; Celery → 独立 worker pool); 可在需要时迁移到 K8s
+- 自动部署: GitHub Actions + Webhook 方案 (见下方部署自动化章节)
+
+---
+
+## 部署自动化
+
+### 流程
+
+```
+Git push → GitHub Actions 构建 Docker 镜像
+  → 推送到 GitHub Container Registry (GHCR)
+  → 发送 Webhook 到服务器
+  → 服务器拉取新镜像 → docker compose up -d → 健康检查
+```
+
+### GitHub Actions 工作流 (`.github/workflows/deploy.yml`)
+
+触发条件: 推送到 `main` 分支
+
+步骤:
+1. 检出代码
+2. 登录 GHCR
+3. 构建并推送 backend 镜像 (利用 Docker BuildKit 缓存加速)
+4. 构建并推送 frontend 镜像
+5. 发送 Webhook 到服务器触发部署
+
+### 服务器端
+
+**Webhook 接收器** (`scripts/deploy-webhook.py`):
+- 监听 HTTP POST `/webhook/deploy`
+- 验证 Webhook Secret (防伪造请求)
+- 执行 `docker compose pull && docker compose up -d --remove-orphans`
+- 等待健康检查通过
+- 清理旧镜像 (`docker image prune -f`)
+- 推送部署结果通知 (Discord)
+
+**部署策略:**
+- 零停机: 先启动新容器 → 健康检查通过 → 旧容器自动被替换
+- 数据库: 部署前自动运行 `alembic upgrade head`
+- 回滚: 保留上一次部署的镜像 tag，可手动切回 `docker compose up -d` 指定旧 tag
+- 健康检查超时: 60 秒内未通过则告警
+
+### 密钥管理
+
+生产部署通过 Docker secrets 注入:
+- JWT_SECRET、ENCRYPTION_KEY、API Keys 不写入 `.env` 文件
+- 使用 `docker compose -f docker-compose.yml -f docker-compose.prod.yml` 覆盖
+- Webhook Secret 通过环境变量 `WEBHOOK_SECRET` 传入
