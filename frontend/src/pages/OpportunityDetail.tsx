@@ -1,51 +1,99 @@
 import { useParams } from 'react-router-dom'
+import { useQuery } from "@tanstack/react-query"
+import { useAuthStore } from "../stores/authStore"
+import { useItemNames } from "../hooks/useItemNames"
+
+const API = "/api/v1"
+
+async function fetchJSON(url: string, token: string) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(res.statusText)
+  return res.json()
+}
 
 export default function OpportunityDetail() {
   const { id } = useParams()
+  const token = useAuthStore(s => s.token)
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["opportunity", id],
+    queryFn: () => fetchJSON(`${API}/opportunities/${id}`, token!),
+    enabled: !!token && !!id,
+  })
+
+  const itemName = useItemNames(data ? [data.type_id] : [])
+
+  if (isLoading) return <div className="text-center text-gray-500 py-20">加载中...</div>
+  if (error) return <div className="text-center text-eve-danger py-20">加载失败: {String(error)}</div>
+  if (!data || data.error) return <div className="text-center text-gray-500 py-20">机会不存在</div>
+
+  const o = data
+  const profitPct = o.estimated_profit_pct ?? 0
+  const cost = o.cost_breakdown ?? {}
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center gap-4">
         <button onClick={() => window.history.back()} className="font-display text-xs text-eve-gold tracking-wider hover:opacity-70">← 返回列表</button>
-        <h1 className="font-display text-lg font-semibold tracking-wider">机会详情</h1>
+        <h1 className="font-display text-lg font-semibold tracking-wider">{itemName(o.type_id)} · {o.type === "arbitrage" ? "套利" : "投资"}</h1>
+        <span className={`text-[10px] px-2 py-0.5 rounded font-display tracking-wider border ${
+          o.status === "analyzed" ? "text-eve-cyan border-eve-cyan/30 bg-eve-cyan/10" : "text-gray-400 border-white/10 bg-white/5"
+        }`}>{o.status === "draft" ? "待分析" : o.status === "analyzed" ? "已分析" : o.status}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
-          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">价格信息</h3>
+          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">价格与利润</h3>
           <div className="space-y-3 text-sm">
-            <div className="flex justify-between"><span className="text-gray-400">买入价 (Jita)</span><span className="font-display">5.20 ISK</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">卖出价 (Amarr)</span><span className="font-display text-eve-profit">5.85 ISK</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">原始价差</span><span className="font-display text-eve-cyan">+12.5%</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">净利润率</span><span className="font-display text-eve-profit">+8.2%</span></div>
+            {o.buy_price != null && <Row label="买入价" value={`${o.buy_price.toLocaleString()} ISK`} />}
+            {o.sell_price != null && <Row label="卖出价" value={`${o.sell_price.toLocaleString()} ISK`} color="text-eve-profit" />}
+            {o.estimated_profit != null && <Row label="预估利润" value={`${o.estimated_profit.toLocaleString()} ISK`} color={profitPct > 0 ? "text-eve-profit" : "text-eve-danger"} />}
+            <Row label="利润率" value={o.estimated_profit_pct != null ? `${profitPct.toFixed(2)}%` : "—"} color={profitPct > 0 ? "text-eve-profit" : profitPct < 0 ? "text-eve-danger" : ""} />
+            <Row label="成交量置信度" value={`${(o.volume_confidence ?? 0) * 100}%`} />
+            <Row label="评分" value={o.recommendation_score != null ? `${o.recommendation_score}/10` : "—"} />
+            <Row label="风险等级" value={o.risk_level === "low" ? "低" : o.risk_level === "medium" ? "中" : o.risk_level === "high" ? "高" : "未评估"}
+              color={o.risk_level === "high" ? "text-eve-danger" : o.risk_level === "low" ? "text-eve-profit" : "text-eve-warning"} />
           </div>
         </div>
 
         <div className="bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
           <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">成本分解</h3>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between"><span className="text-gray-400">中介费</span><span>0.03 ISK/单位</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">销售税</span><span>0.05 ISK/单位</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">估算运费</span><span>0.12 ISK/单位</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">资金成本</span><span>0.02 ISK/单位</span></div>
-          </div>
+          {Object.keys(cost).length > 0 ? (
+            <div className="space-y-3 text-sm">
+              {cost.broker_fee != null && <Row label="中介费" value={`${cost.broker_fee.toLocaleString()} ISK`} />}
+              {cost.sales_tax != null && <Row label="销售税" value={`${cost.sales_tax.toLocaleString()} ISK`} />}
+              {cost.estimated_shipping != null && <Row label="估算运费" value={`${cost.estimated_shipping.toLocaleString()} ISK`} />}
+              {cost.capital_cost != null && <Row label="资金成本" value={`${cost.capital_cost.toLocaleString()} ISK`} />}
+              {cost.total_costs != null && <Row label="总成本" value={`${cost.total_costs.toLocaleString()} ISK`} color="text-eve-warning" />}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500 py-6 text-center">成本分解数据未生成</div>
+          )}
         </div>
 
-        <div className="col-span-2 bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
-          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">AI 分析报告</h3>
-          <div className="text-sm text-gray-300 leading-relaxed space-y-3">
-            <p>三钛合金在 Jita ↔ Amarr 航线显示稳定的套利空间。当前成交量充足（日均 1,200M 单位），流动性风险低。</p>
-            <p><strong className="text-eve-profit">推荐操作：</strong>建议分批买入，每批不超过日成交量的 5%，降低滑点影响。</p>
-            <p><strong className="text-eve-warning">风险提示：</strong>关注版本更新对矿物市场的影响。以上分析基于历史数据，实际结果可能不同。</p>
+        {o.agent_analysis && (
+          <div className="col-span-2 bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
+            <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">AI 分析报告</h3>
+            <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{o.agent_analysis}</div>
           </div>
-        </div>
+        )}
 
         <div className="col-span-2 flex gap-3">
-          <button className="px-6 py-2.5 bg-eve-profit/20 border border-eve-profit/30 text-eve-profit font-display text-xs rounded-lg tracking-wider hover:bg-eve-profit/30 transition-colors">追踪此机会</button>
+          <button className="px-6 py-2.5 bg-eve-gold/20 border border-eve-gold/30 text-eve-gold font-display text-xs rounded-lg tracking-wider hover:bg-eve-gold/30 transition-colors">追踪机会</button>
           <button className="px-6 py-2.5 bg-white/5 border border-white/10 text-gray-400 font-display text-xs rounded-lg tracking-wider hover:bg-white/10 transition-colors">标记已交易</button>
-          <button className="px-6 py-2.5 bg-white/5 border border-white/10 text-gray-400 font-display text-xs rounded-lg tracking-wider hover:bg-white/10 transition-colors ml-auto">忽略</button>
+          <span className="flex-1" />
+          <button className="px-6 py-2.5 bg-white/5 border border-white/10 text-gray-400 font-display text-xs rounded-lg tracking-wider hover:bg-white/10 transition-colors">忽略</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function Row({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-gray-400">{label}</span>
+      <span className={`font-display text-sm ${color ?? ""}`}>{value}</span>
     </div>
   )
 }

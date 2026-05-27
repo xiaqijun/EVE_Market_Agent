@@ -1,49 +1,101 @@
-import { useState } from 'react'
+import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
+import { useAuthStore } from "../stores/authStore"
+import { useItemNames } from "../hooks/useItemNames"
+
+const API = "/api/v1"
+
+async function fetchJSON(url: string, token: string) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(res.statusText)
+  return res.json()
+}
 
 export default function OpportunitiesPage() {
-  const [filter, setFilter] = useState('all')
+  const token = useAuthStore(s => s.token)
+  const [filter, setFilter] = useState("all")
 
-  const opportunities = [
-    { id: '1', type: 'arbitrage', item: '三钛合金', route: 'Jita IV-4 → Amarr VIII-12', profit: '+8.2%', score: 9, risk: 'low', tag: '强烈推荐', tagColor: 'text-eve-profit bg-eve-profit/10 border-eve-profit/30' },
-    { id: '2', type: 'arbitrage', item: '类晶体胶矿', route: 'Jita IV-4 → Dodixie IX-20', profit: '+5.1%', score: 7, risk: 'low', tag: '推荐', tagColor: 'text-eve-profit bg-eve-profit/10 border-eve-profit/30' },
-    { id: '3', type: 'investment', item: '伊甸币', route: '30天趋势 · RSI 42 · 低于均线', profit: '目标+15%', score: 9, risk: 'medium', tag: '强烈推荐', tagColor: 'text-eve-gold bg-eve-gold/10 border-eve-gold/30' },
-    { id: '4', type: 'arbitrage', item: '损伤控制 II', route: 'Amarr VIII-12 → Jita IV-4', profit: '+6.8%', score: 8, risk: 'low', tag: '推荐', tagColor: 'text-eve-profit bg-eve-profit/10 border-eve-profit/30' },
-  ]
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["opportunities", filter],
+    queryFn: () => fetchJSON(`${API}/opportunities?${filter !== "all" ? `type=${filter}&` : ""}page_size=50`, token!),
+    enabled: !!token,
+    refetchInterval: 60000,
+  })
 
-  const filtered = filter === 'all' ? opportunities : opportunities.filter(o => o.type === filter)
+  const itemIds = (data?.items ?? []).map((o: any) => o.type_id as number)
+  const itemName = useItemNames(itemIds)
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-lg font-semibold tracking-wider">交易机会</h1>
+        <div>
+          <h1 className="font-display text-lg font-semibold tracking-wider">交易机会</h1>
+          <p className="text-xs text-gray-500 mt-1">由 Scanner Agent 自动发现 · 定时 60s 刷新</p>
+        </div>
         <div className="flex gap-2">
-          {['all', 'arbitrage', 'investment'].map(f => (
+          {["all", "arbitrage", "investment"].map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-4 py-1.5 rounded-lg text-xs font-display tracking-wider transition-colors ${
-                filter === f ? 'bg-eve-gold text-black' : 'bg-white/5 border border-white/10 text-gray-400 hover:border-white/20'
+                filter === f ? "bg-eve-gold text-black" : "bg-white/5 border border-white/10 text-gray-400 hover:border-white/20"
               }`}>
-              {f === 'all' ? '全部' : f === 'arbitrage' ? '套利' : '投资'}
+              {f === "all" ? "全部" : f === "arbitrage" ? "套利" : "投资"}
             </button>
           ))}
+          <button onClick={() => refetch()} className="px-3 py-1.5 rounded-lg text-xs font-display tracking-wider bg-white/5 border border-white/10 text-gray-400 hover:border-white/20">
+            ↻ 刷新
+          </button>
         </div>
       </div>
-      <div className="grid gap-3">
-        {filtered.map(o => (
-          <div key={o.id} className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm hover:border-white/10 transition-all flex items-center gap-4">
-            <div className="w-9 h-9 rounded-lg bg-eve-cyan/10 text-eve-cyan flex items-center justify-center text-lg flex-shrink-0">
-              {o.type === 'arbitrage' ? '⛏' : '💎'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium">{o.item}</div>
-              <div className="text-[11px] text-gray-500 mt-0.5">{o.route}</div>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <div className={`font-display text-[15px] font-bold ${o.profit.startsWith('+') ? 'text-eve-profit' : 'text-eve-gold'}`}>{o.profit}</div>
-              <div className="text-[11px] text-gray-500 mt-0.5">评分 {o.score}/10 · 风险: {o.risk === 'low' ? '低' : '中'}</div>
-            </div>
-            <span className={`text-[10px] px-2 py-1 rounded font-display tracking-wider border ${o.tagColor} flex-shrink-0`}>{o.tag}</span>
-          </div>
-        ))}
+
+      {isLoading && <div className="text-center text-gray-500 py-20">加载中...</div>}
+      {error && <div className="text-center text-eve-danger py-20">加载失败: {String(error)}</div>}
+
+      {data && data.items?.length === 0 && (
+        <div className="text-center text-gray-500 py-20">
+          <div className="text-4xl mb-4">◆</div>
+          <div className="font-display text-sm tracking-wider mb-2">暂无交易机会</div>
+          <div className="text-xs text-gray-600">Scanner Agent 尚未发现符合条件的市场机会</div>
+          <div className="text-xs text-gray-600">请在设置中配置 LLM API Key 并确保扫描区域有物品可分析</div>
+        </div>
+      )}
+
+      {data && data.items?.length > 0 && (
+        <div className="grid gap-3">
+          {data.items.map((o: any) => (
+            <Link key={o.id} to={`/opportunities/${o.id}`}
+              className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm hover:border-white/10 transition-all flex items-center gap-4 group">
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg flex-shrink-0 ${o.type === "arbitrage" ? "bg-eve-cyan/10 text-eve-cyan" : "bg-eve-gold/10 text-eve-gold"}`}>
+                {o.type === "arbitrage" ? "⛏" : "💎"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{itemName(o.type_id)}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-display tracking-wider ${
+                    o.status === "analyzed" ? "text-eve-cyan bg-eve-cyan/10" : "text-gray-500 bg-white/5"
+                  }`}>{o.status === "draft" ? "待分析" : o.status === "analyzed" ? "已分析" : o.status}</span>
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  {o.type === "arbitrage" ? "区域间套利" : "长期投资分析"}
+                  {o.recommendation_score != null && ` · 评分 ${o.recommendation_score}/10`}
+                  {o.risk_level && ` · ${o.risk_level === "low" ? "低风险" : o.risk_level === "medium" ? "中风险" : "高风险"}`}
+                </div>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className={`font-display text-base font-bold ${(o.estimated_profit_pct ?? 0) > 0 ? "text-eve-profit" : (o.estimated_profit_pct ?? 0) < 0 ? "text-eve-danger" : "text-gray-500"}`}>
+                  {o.estimated_profit_pct != null ? `${o.estimated_profit_pct > 0 ? "+" : ""}${o.estimated_profit_pct.toFixed(1)}%` : "—"}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5">{o.volume_confidence ? `置信度 ${(o.volume_confidence * 100).toFixed(0)}%` : ""}</div>
+              </div>
+              <span className="text-gray-600 group-hover:text-gray-400 transition-colors text-lg">→</span>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      <div className="text-center text-[11px] text-gray-600">
+        {data?.total != null ? `${data.total} 个机会` : ""}
+        {data?.total != null ? " · " : ""}数据来源: Scanner + Analyst Agent
       </div>
     </div>
   )
