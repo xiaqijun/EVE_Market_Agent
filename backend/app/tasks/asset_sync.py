@@ -54,22 +54,31 @@ async def _async_sync_assets(character_id: int | None):
         await db.commit()
 
 
+def _safe_decrypt(encrypted: str) -> str:
+    """Try Fernet decrypt, fall back to plain text."""
+    if not encrypted:
+        return ""
+    try:
+        return decrypt_token(encrypted)
+    except Exception:
+        return encrypted
+
+
 async def _refresh_if_needed(db: AsyncSession, char: EveCharacter) -> str | None:
     now = datetime.now(timezone.utc)
 
     # Token still valid
     if char.token_expires_at and char.token_expires_at > now:
-        return decrypt_token(char.access_token)
+        return _safe_decrypt(char.access_token)
 
     # Token expired, try refresh
     if not char.refresh_token:
         print(f"[ASSET] No refresh token for {char.character_name}")
         return None
 
-    try:
-        refresh_token = decrypt_token(char.refresh_token)
-    except Exception as e:
-        print(f"[ASSET] Failed to decrypt refresh token: {e}")
+    refresh_token = _safe_decrypt(char.refresh_token)
+    if not refresh_token:
+        print(f"[ASSET] Empty refresh token for {char.character_name}")
         return None
 
     try:
