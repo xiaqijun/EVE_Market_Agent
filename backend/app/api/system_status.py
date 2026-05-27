@@ -1,7 +1,7 @@
 """System status API — data freshness, task execution, health monitoring."""
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -109,6 +109,115 @@ async def task_status(_: str = Depends(get_current_user)):
             "asset_sync": {"interval": "30 min", "description": "同步角色资产"},
             "cleanup_old_orders": {"interval": "60 min", "description": "清理过期订单数据"},
         },
+    }
+
+
+@router.get("/token-usage")
+async def token_usage(
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get LLM token usage summary for the current user."""
+    uid = uuid.UUID(user_id)
+    from app.models.logs import TokenUsage
+
+    # Today's usage
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    r = await db.execute(
+        select(
+            func.sum(TokenUsage.total_tokens),
+            func.sum(TokenUsage.cost_usd),
+            func.count(TokenUsage.id),
+        ).where(TokenUsage.user_id == uid, TokenUsage.created_at >= today)
+    )
+    row = r.one()
+    today_tokens, today_cost, today_calls = row[0] or 0, row[1] or 0, row[2] or 0
+
+    # All-time usage
+    r = await db.execute(
+        select(
+            func.sum(TokenUsage.total_tokens),
+            func.sum(TokenUsage.cost_usd),
+            func.count(TokenUsage.id),
+        ).where(TokenUsage.user_id == uid)
+    )
+    row = r.one()
+    total_tokens, total_cost, total_calls = row[0] or 0, row[1] or 0, row[2] or 0
+
+    # Per-agent breakdown (today)
+    r = await db.execute(
+        select(
+            TokenUsage.agent_name,
+            func.count(TokenUsage.id),
+            func.sum(TokenUsage.total_tokens),
+            func.sum(TokenUsage.cost_usd),
+        ).where(TokenUsage.user_id == uid, TokenUsage.created_at >= today)
+        .group_by(TokenUsage.agent_name)
+    )
+    by_agent = [
+        {"agent": row[0], "calls": row[1], "tokens": row[2] or 0, "cost": round(row[3] or 0, 4)}
+        for row in r.fetchall()
+    ]
+
+    return {
+        "today": {"tokens": today_tokens, "cost_usd": round(today_cost, 4), "calls": today_calls},
+        "total": {"tokens": total_tokens, "cost_usd": round(total_cost, 4), "calls": total_calls},
+        "by_agent": by_agent,
+    }
+
+
+@router.get("/agent-logs")
+async def agent_logs(
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(20, le=100),
+):
+    """Get recent agent execution logs for the current user."""
+    from app.models.logs import AgentLog
+
+    r = await db.execute(
+        select(AgentLog)
+        .where(AgentLog.user_id == uuid.UUID(user_id))
+        .order_by(AgentLog.created_at.desc())
+        .limit(limit)
+    )
+    logs = r.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(l.id), "agent": l.agent_name, "action": l.action,
+                "status": l.status, "latency_ms": l.latency_ms,
+                "input": l.input_summary, "output": l.output_summary,
+                "error": l.error, "time": l.created_at.isoformat(),
+            }
+            for l in logs
+        ]
+    }
+
+
+@router.get("/task-logs")
+async def task_logs(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(20, le=100),
+    _: str = Depends(get_current_user),
+):
+    """Get recent Celery task execution logs."""
+    from app.models.logs import TaskLog
+
+    r = await db.execute(
+        select(TaskLog).order_by(TaskLog.created_at.desc()).limit(limit)
+    )
+    logs = r.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(l.id), "task": l.task_name, "task_id": l.task_id,
+                "status": l.status, "duration_ms": l.duration_ms,
+                "result": l.result_summary, "error": l.error,
+                "time": l.created_at.isoformat(),
+            }
+            for l in logs
+        ]
     }
 
 

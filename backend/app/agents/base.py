@@ -41,4 +41,8 @@ class BaseAgent:
         return await llm_service.chat(self.alias, [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
-        ], api_key=api_key, provider_override=provider_override, **kwargs)
+        ], api_key=api_key, provider_override=provider_override,
+            user_id=context.user_id if context else "",
+            agent_name=self.__class__.__name__,
+            session_id=context.session_id if context else "",
+            **kwargs)

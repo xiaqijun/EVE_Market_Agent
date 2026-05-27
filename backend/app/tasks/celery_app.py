@@ -1,6 +1,9 @@
 from celery import Celery
 from app.config import settings
 
+# Import task logger to register Celery signal hooks
+import app.tasks.task_logger  # noqa: F401
+
 celery_app = Celery(
     "eve_market",
     broker=settings.redis_url,
