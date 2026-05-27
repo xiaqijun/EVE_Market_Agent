@@ -37,20 +37,20 @@ export default function PortfolioPage() {
 
   const totalTrades = trades?.items?.length ?? profile?.total_trades ?? 0
   const winRate = profile?.win_rate && profile.win_rate > 0 ? (profile.win_rate * 100).toFixed(0) : null
-  const totalProfit = profile?.total_profit ?? 0
+  const totalProfit = summary?.net_pnl ?? 0
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="font-display text-lg font-semibold tracking-wider">资产总览</h1>
-        <p className="text-xs text-gray-500 mt-1">结合交易记录计算盈亏 · 数据每 2 分钟刷新</p>
+        <p className="text-xs text-gray-500 mt-1">ESI 自动同步 · 交易记录实时更新</p>
       </div>
 
       <div className="grid grid-cols-4 gap-4">
-        <StatCard label="总资产估值" value={sLoading ? "..." : summary?.total_asset_value > 0 ? `${(summary.total_asset_value / 1_000_000_000).toFixed(1)} 亿` : "—"} color="text-eve-cyan" sub="ISK" />
-        <StatCard label="可用 ISK" value={sLoading ? "..." : summary?.total_isk > 0 ? `${(summary.total_isk / 1_000_000_000).toFixed(1)} 亿` : "—"} color="text-eve-profit" sub="流动资金" />
-        <StatCard label="累计盈亏" value={totalProfit ? `${(totalProfit / 1_000_000).toFixed(1)}M` : "—"} color={totalProfit >= 0 ? "text-eve-profit" : "text-eve-danger"} sub="ISK" />
+        <StatCard label="总资产估值" value={sLoading ? "..." : summary?.total_isk > 0 ? `${(summary.total_isk / 1_000_000_000).toFixed(1)} 亿` : "—"} color="text-eve-cyan" sub="ISK 余额" />
+        <StatCard label="累计盈亏" value={totalProfit !== 0 ? `${totalProfit > 0 ? '+' : ''}${(totalProfit / 1_000_000).toFixed(1)}M` : "—"} color={totalProfit >= 0 ? "text-eve-profit" : "text-eve-danger"} sub="ISK" />
         <StatCard label="交易统计" value={String(totalTrades)} color="text-eve-gold" sub={winRate ? `胜率 ${winRate}%` : "笔交易"} />
+        <StatCard label="数据同步" value={summary?.asset_updated ? new Date(summary.asset_updated).toLocaleDateString("zh-CN") : "—"} color="text-eve-cyan" sub="最近同步" />
       </div>
 
       {totalTrades > 0 ? (
