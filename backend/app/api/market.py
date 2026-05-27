@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.market import MarketOrder, MarketHistory
-from app.tools.sde_lookup import search_items, get_all_regions, get_item_groups
+from app.tools.sde_lookup import search_items, get_all_regions, get_item_groups, get_item
 from app.middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/market", tags=["market"])
@@ -58,6 +58,20 @@ async def search_market_items(
     db: AsyncSession = Depends(get_db), _: str = Depends(get_current_user),
 ):
     return {"items": await search_items(db, q, limit)}
+
+
+@router.get("/items/batch")
+async def batch_get_items(
+    ids: str = Query(...), db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    type_ids = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    results = {}
+    for tid in type_ids[:100]:
+        item = await get_item(db, tid)
+        if item:
+            results[tid] = item
+    return {"items": results}
 
 
 @router.get("/sde/regions")

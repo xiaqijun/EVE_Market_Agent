@@ -47,17 +47,32 @@ class OnboardingRequest(BaseModel):
 
 @router.get("/eve/login")
 async def eve_login():
+    if not settings.esi_client_id:
+        raise HTTPException(status_code=503, detail="EVE SSO 未配置，请在服务器 .env 文件中设置 ESI_CLIENT_ID 和 ESI_CLIENT_SECRET")
+    import secrets
+    state = secrets.token_urlsafe(32)
+    import redis
+    r = redis.from_url(settings.redis_url)
+    r.setex(f"esi:state:{state}", 600, "1")
+
     url = (
         "https://login.eveonline.com/v2/oauth/authorize/?"
         f"response_type=code&redirect_uri={settings.esi_callback_url}"
         f"&client_id={settings.esi_client_id}"
-        "&scope=esi-assets.read_assets.v1+esi-skills.read_skills.v1+esi-markets.structure_markets.v1"
+        f"&scope=esi-assets.read_assets.v1+esi-skills.read_skills.v1+esi-markets.structure_markets.v1"
+        f"&state={state}"
     )
-    return RedirectResponse(url=url)
+    return {"url": url}
 
 
 @router.get("/eve/callback")
-async def eve_callback(code: str, db: AsyncSession = Depends(get_db)):
+async def eve_callback(code: str, state: str = "", db: AsyncSession = Depends(get_db)):
+    import redis
+    r = redis.from_url(settings.redis_url)
+    if state and r.exists(f"esi:state:{state}"):
+        r.delete(f"esi:state:{state}")
+    elif state:
+        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://login.eveonline.com/v2/oauth/token",
@@ -102,14 +117,16 @@ async def eve_callback(code: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     access = create_access_token(str(user.id))
     refresh = create_refresh_token(str(user.id))
-    return {
-        "access_token": access, "refresh_token": refresh,
-        "user": {
-            "id": str(user.id), "display_name": user.display_name,
-            "onboarding_completed": user.onboarding_completed,
-            "disclaimer_accepted": user.disclaimer_accepted,
-        },
-    }
+
+    import urllib.parse
+    params = urllib.parse.urlencode({
+        "token": access,
+        "refresh": refresh,
+        "user_id": str(user.id),
+        "name": user.display_name,
+        "new": "0" if existing else "1",
+    })
+    return RedirectResponse(url=f"/auth/callback?{params}", status_code=302)
 
 
 @router.post("/register")

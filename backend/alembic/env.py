@@ -4,6 +4,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.database import Base
+from pgvector.sqlalchemy import Vector  # noqa: F401 — register vector type for Alembic autogenerate
 
 config = context.config
 if config.config_file_name is not None:

@@ -60,7 +60,7 @@ class EsiClient:
     async def verify_character(self, access_token: str) -> dict:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://esi.evetech.net/verify/",
+                "https://login.eveonline.com/oauth/verify",
                 headers={"Authorization": f"Bearer {access_token}"}
             )
             resp.raise_for_status()
