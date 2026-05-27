@@ -27,6 +27,7 @@ from app.api.users import router as users_router
 from app.api.notifications import router as notifications_router
 from app.api.websocket import router as ws_router
 from app.api.admin import router as admin_router
+from app.api.system_status import router as system_router
 
 app.include_router(auth_router)
 app.include_router(market_router)
@@ -37,6 +38,7 @@ app.include_router(users_router)
 app.include_router(notifications_router)
 app.include_router(ws_router)
 app.include_router(admin_router)
+app.include_router(system_router)
 
 
 @app.get("/health")

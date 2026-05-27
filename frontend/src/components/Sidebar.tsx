@@ -7,6 +7,7 @@ const navItems = [
   { to: '/chat', label: '对话助手', icon: '◇' },
   { to: '/portfolio', label: '资产总览', icon: '◎' },
   { to: '/trades', label: '交易记录', icon: '◉' },
+  { to: '/status', label: '系统监控', icon: '◉' },
   { to: '/settings', label: '系统配置', icon: '⚙' },
 ]
 

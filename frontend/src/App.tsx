@@ -14,6 +14,7 @@ import ChatPage from './pages/ChatPage'
 import PortfolioPage from './pages/PortfolioPage'
 import TradesPage from './pages/TradesPage'
 import SettingsPage from './pages/SettingsPage'
+import SystemStatusPage from './pages/SystemStatusPage'
 
 const queryClient = new QueryClient()
 
@@ -47,6 +48,7 @@ export default function App() {
                   <Route path="/portfolio" element={<PortfolioPage />} />
                   <Route path="/trades" element={<TradesPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/status" element={<SystemStatusPage />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
