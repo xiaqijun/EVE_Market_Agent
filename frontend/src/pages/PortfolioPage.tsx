@@ -4,6 +4,14 @@ import { useItemNames } from "../hooks/useItemNames"
 
 const API = "/api/v1"
 
+function formatISK(amount: number): string {
+  if (amount >= 1_000_000_000_000) return `${(amount / 1_000_000_000_000).toFixed(1)}T`
+  if (amount >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(2)}B`
+  if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)}M`
+  if (amount >= 1_000) return `${(amount / 1_000).toFixed(0)}K`
+  return `${amount.toFixed(0)}`
+}
+
 async function fetchJSON(url: string, token: string) {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) throw new Error(res.statusText)
@@ -38,19 +46,23 @@ export default function PortfolioPage() {
   const totalTrades = trades?.items?.length ?? profile?.total_trades ?? 0
   const winRate = profile?.win_rate && profile.win_rate > 0 ? (profile.win_rate * 100).toFixed(0) : null
   const totalProfit = summary?.net_pnl ?? 0
+  const totalValue = summary?.total_value ?? 0
+  const iskBalance = summary?.total_isk ?? 0
+  const assetValue = summary?.asset_value ?? 0
+  const assetCount = summary?.asset_count ?? 0
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="font-display text-lg font-semibold tracking-wider">资产总览</h1>
-        <p className="text-xs text-gray-500 mt-1">ESI 自动同步 · 交易记录实时更新</p>
+        <p className="text-xs text-gray-500 mt-1">ESI 自动同步 · 含 ISK 余额 + 物品估值</p>
       </div>
 
       <div className="grid grid-cols-4 gap-4">
-        <StatCard label="总资产估值" value={sLoading ? "..." : summary?.total_isk > 0 ? `${(summary.total_isk / 1_000_000_000).toFixed(1)} 亿` : "—"} color="text-eve-cyan" sub="ISK 余额" />
-        <StatCard label="累计盈亏" value={totalProfit !== 0 ? `${totalProfit > 0 ? '+' : ''}${(totalProfit / 1_000_000).toFixed(1)}M` : "—"} color={totalProfit >= 0 ? "text-eve-profit" : "text-eve-danger"} sub="ISK" />
-        <StatCard label="交易统计" value={String(totalTrades)} color="text-eve-gold" sub={winRate ? `胜率 ${winRate}%` : "笔交易"} />
-        <StatCard label="数据同步" value={summary?.asset_updated ? new Date(summary.asset_updated).toLocaleDateString("zh-CN") : "—"} color="text-eve-cyan" sub="最近同步" />
+        <StatCard label="总资产估值" value={sLoading ? "..." : totalValue > 0 ? formatISK(totalValue) : "—"} color="text-eve-cyan" sub="ISK + 物品" />
+        <StatCard label="ISK 余额" value={sLoading ? "..." : iskBalance > 0 ? formatISK(iskBalance) : "—"} color="text-eve-profit" sub="可用资金" />
+        <StatCard label="持有物品" value={sLoading ? "..." : assetCount > 0 ? `${assetCount} 件` : "—"} color="text-eve-gold" sub={`估值 ${assetValue > 0 ? formatISK(assetValue) : "—"}`} />
+        <StatCard label="累计盈亏" value={totalProfit !== 0 ? `${totalProfit > 0 ? '+' : ''}${formatISK(Math.abs(totalProfit))}` : "—"} color={totalProfit >= 0 ? "text-eve-profit" : "text-eve-danger"} sub="ISK" />
       </div>
 
       {totalTrades > 0 ? (

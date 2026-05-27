@@ -4,10 +4,43 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.trade import UserTrade, AssetSnapshot
+from app.models.market import MarketOrder
 from app.models.rag import UserProfile
 from app.middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/portfolio", tags=["portfolio"])
+
+
+async def _estimate_asset_value(db: AsyncSession, assets: list) -> float:
+    """Estimate asset value using market orders for each type_id."""
+    if not assets:
+        return 0.0
+
+    # Count quantity per type_id
+    type_quantities: dict[int, int] = {}
+    for item in assets:
+        tid = item.get("type_id")
+        qty = item.get("quantity", 1)
+        if tid:
+            type_quantities[tid] = type_quantities.get(tid, 0) + qty
+
+    if not type_quantities:
+        return 0.0
+
+    # Batch fetch sell orders for the top 50 type_ids (by quantity)
+    sorted_types = sorted(type_quantities.items(), key=lambda x: -x[1])[:50]
+    total_value = 0.0
+
+    for tid, qty in sorted_types:
+        r = await db.execute(
+            select(func.avg(MarketOrder.price))
+            .where(MarketOrder.type_id == tid, MarketOrder.is_buy_order == False)
+        )
+        avg_price = r.scalar() or 0
+        if avg_price > 0:
+            total_value += avg_price * qty
+
+    return total_value
 
 
 @router.get("/summary")
@@ -16,7 +49,7 @@ async def portfolio_summary(
 ):
     uid = uuid.UUID(user_id)
 
-    # Latest asset snapshot for ISK balance
+    # Latest asset snapshot
     asset_result = await db.execute(
         select(AssetSnapshot)
         .where(AssetSnapshot.user_id == uid)
@@ -24,6 +57,10 @@ async def portfolio_summary(
         .limit(1)
     )
     latest_asset = asset_result.scalar_one_or_none()
+
+    isk_balance = latest_asset.total_isk if latest_asset else 0
+    raw_assets = (latest_asset.snapshot_data or {}).get("assets", []) if latest_asset else []
+    asset_value = await _estimate_asset_value(db, raw_assets)
 
     # Trade stats
     r = await db.execute(select(func.count(UserTrade.id)).where(UserTrade.user_id == uid))
@@ -41,13 +78,15 @@ async def portfolio_summary(
 
     net_pnl = total_revenue - total_cost
 
-    # Profile for win_rate
+    # Profile
     r = await db.execute(select(UserProfile).where(UserProfile.user_id == uid))
     profile = r.scalar_one_or_none()
 
     return {
-        "total_isk": latest_asset.total_isk if latest_asset else 0,
-        "total_asset_value": latest_asset.total_asset_value if latest_asset else 0,
+        "total_isk": round(isk_balance, 2),
+        "asset_value": round(asset_value, 2),
+        "total_value": round(isk_balance + asset_value, 2),
+        "asset_count": len(raw_assets),
         "asset_updated": latest_asset.fetched_at.isoformat() if latest_asset else None,
         "total_trades": trades_count,
         "total_revenue": round(total_revenue, 2),
