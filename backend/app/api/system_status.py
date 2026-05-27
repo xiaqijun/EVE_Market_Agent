@@ -166,6 +166,36 @@ async def token_usage(
     }
 
 
+@router.get("/token-usage/daily")
+async def token_usage_daily(
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(14, le=30),
+):
+    """Get daily token usage trend for chart display."""
+    uid = uuid.UUID(user_id)
+    from app.models.logs import TokenUsage
+
+    cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - __import__("datetime").timedelta(days=days)
+    r = await db.execute(
+        select(
+            func.date(TokenUsage.created_at).label("day"),
+            func.sum(TokenUsage.total_tokens).label("tokens"),
+            func.sum(TokenUsage.cost_usd).label("cost"),
+            func.count(TokenUsage.id).label("calls"),
+        )
+        .where(TokenUsage.user_id == uid, TokenUsage.created_at >= cutoff)
+        .group_by(func.date(TokenUsage.created_at))
+        .order_by(func.date(TokenUsage.created_at))
+    )
+    return {
+        "days": [
+            {"date": str(row[0]), "tokens": row[1] or 0, "cost": round(row[2] or 0, 4), "calls": row[3] or 0}
+            for row in r.fetchall()
+        ]
+    }
+
+
 @router.get("/agent-logs")
 async def agent_logs(
     user_id: str = Depends(get_current_user),
