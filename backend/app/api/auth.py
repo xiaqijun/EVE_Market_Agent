@@ -59,7 +59,7 @@ async def eve_login():
         "https://login.eveonline.com/v2/oauth/authorize/?"
         f"response_type=code&redirect_uri={settings.esi_callback_url}"
         f"&client_id={settings.esi_client_id}"
-        f"&scope=esi-assets.read_assets.v1+esi-skills.read_skills.v1+esi-markets.structure_markets.v1"
+        f"&scope=esi-assets.read_assets.v1+esi-skills.read_skills.v1+esi-markets.structure_markets.v1+esi-wallet.read_character_wallet.v1"
         f"&state={state}"
     )
     return {"url": url}

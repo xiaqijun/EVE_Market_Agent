@@ -79,7 +79,33 @@ async def websocket_endpoint(ws: WebSocket):
 async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg: dict):
     message = msg.get("content", "")
 
-    context = AgentContext(user_id=user_id, session_id=session_id)
+    llm_api_key = ""
+    llm_provider = ""
+    try:
+        import uuid
+        from app.database import async_session
+        from app.models.rag import UserSettings
+        from sqlalchemy import select
+        async with async_session() as db:
+            result = await db.execute(
+                select(UserSettings).where(UserSettings.user_id == uuid.UUID(user_id))
+            )
+            settings_row = result.scalar_one_or_none()
+            if settings_row and settings_row.llm_api_key:
+                stored_key = settings_row.llm_api_key
+                if stored_key and stored_key.startswith("sk-"):
+                    llm_api_key = stored_key
+                elif stored_key:
+                    try:
+                        from app.services.encryption import decrypt_token
+                        llm_api_key = decrypt_token(stored_key)
+                    except Exception:
+                        llm_api_key = stored_key
+                llm_provider = settings_row.llm_provider or ""
+    except Exception:
+        pass
+
+    context = AgentContext(user_id=user_id, session_id=session_id, llm_api_key=llm_api_key, llm_provider=llm_provider)
     orchestrator = OrchestratorAgent()
     route = await orchestrator.run(context, {"message": message})
 

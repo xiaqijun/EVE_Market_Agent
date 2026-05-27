@@ -19,7 +19,7 @@ class AdvisorAgent(BaseAgent):
         )
         user_msg = f"分析结果: {analysis}\n用户问题: {user_message}"
 
-        return {"response": await self._llm_chat(system_prompt, user_msg, max_tokens=3000)}
+        return {"response": await self._llm_chat(system_prompt, user_msg, context=context, max_tokens=3000)}
 
     async def _fallback(self, context: AgentContext, input_data: dict) -> dict:
         return {

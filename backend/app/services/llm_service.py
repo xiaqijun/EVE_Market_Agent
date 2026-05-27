@@ -9,40 +9,55 @@ class LLMService:
         self._model_config = settings.load_model_config()
         self._clients = {}
 
-    def _resolve_model(self, alias: str) -> dict:
+    def _resolve_model(self, alias: str, provider_override: str = "") -> dict:
+        """Resolve model config. If provider_override is set, use it directly instead of alias lookup."""
+        if provider_override:
+            provider_map = {
+                "deepseek": {"provider": "deepseek", "model": "deepseek-chat", "fallback": None},
+                "openai": {"provider": "openai", "model": "gpt-4o-mini", "fallback": None},
+                "anthropic": {"provider": "anthropic", "model": "claude-sonnet-4-20250514", "fallback": None},
+            }
+            if provider_override in provider_map:
+                return provider_map[provider_override]
         aliases = self._model_config.get("aliases", {})
         if alias in aliases:
             return aliases[alias]
         raise ValueError(f"Unknown model alias: {alias}")
 
-    def _get_client(self, provider: str):
-        if provider not in self._clients:
+    def _get_client(self, provider: str, api_key: str = ""):
+        cache_key = f"{provider}:{api_key[:8]}" if api_key else provider
+        if cache_key not in self._clients:
+            key = api_key or self._get_default_key(provider)
             if provider == "openai":
-                self._clients[provider] = AsyncOpenAI(api_key=settings.openai_api_key)
+                self._clients[cache_key] = AsyncOpenAI(api_key=key)
             elif provider == "anthropic":
-                self._clients[provider] = AsyncAnthropic(api_key=settings.anthropic_api_key)
+                self._clients[cache_key] = AsyncAnthropic(api_key=key)
             elif provider == "deepseek":
-                self._clients[provider] = AsyncOpenAI(
-                    api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com/v1"
+                self._clients[cache_key] = AsyncOpenAI(
+                    api_key=key, base_url="https://api.deepseek.com/v1"
                 )
             else:
                 raise ValueError(f"Unknown provider: {provider}")
-        return self._clients[provider]
+        return self._clients[cache_key]
 
-    async def chat(self, alias: str, messages: list[dict], **kwargs) -> str:
-        config = self._resolve_model(alias)
+    def _get_default_key(self, provider: str) -> str:
+        keys = {"openai": settings.openai_api_key, "anthropic": settings.anthropic_api_key, "deepseek": settings.deepseek_api_key}
+        return keys.get(provider, "")
+
+    async def chat(self, alias: str, messages: list[dict], api_key: str = "", provider_override: str = "", **kwargs) -> str:
+        config = self._resolve_model(alias, provider_override)
         try:
-            return await self._chat_internal(config, messages, **kwargs)
+            return await self._chat_internal(config, messages, api_key=api_key, **kwargs)
         except Exception:
             fallback = config.get("fallback")
             if fallback:
-                return await self.chat(fallback, messages, **kwargs)
+                return await self.chat(fallback, messages, api_key=api_key, provider_override="", **kwargs)
             raise
 
-    async def _chat_internal(self, config: dict, messages: list[dict], **kwargs) -> str:
+    async def _chat_internal(self, config: dict, messages: list[dict], api_key: str = "", **kwargs) -> str:
         provider = config["provider"]
         model = config["model"]
-        client = self._get_client(provider)
+        client = self._get_client(provider, api_key)
 
         if provider == "anthropic":
             response = await client.messages.create(
@@ -60,21 +75,21 @@ class LLMService:
             )
             return response.choices[0].message.content
 
-    async def chat_stream(self, alias: str, messages: list[dict], **kwargs) -> AsyncIterator[str]:
-        config = self._resolve_model(alias)
+    async def chat_stream(self, alias: str, messages: list[dict], api_key: str = "", provider_override: str = "", **kwargs) -> AsyncIterator[str]:
+        config = self._resolve_model(alias, provider_override)
         try:
-            async for chunk in self._chat_stream_internal(config, messages, **kwargs):
+            async for chunk in self._chat_stream_internal(config, messages, api_key=api_key, **kwargs):
                 yield chunk
         except Exception:
             fallback = config.get("fallback")
             if fallback:
-                async for chunk in self.chat_stream(fallback, messages, **kwargs):
+                async for chunk in self.chat_stream(fallback, messages, api_key=api_key, **kwargs):
                     yield chunk
 
-    async def _chat_stream_internal(self, config: dict, messages: list[dict], **kwargs) -> AsyncIterator[str]:
+    async def _chat_stream_internal(self, config: dict, messages: list[dict], api_key: str = "", **kwargs) -> AsyncIterator[str]:
         provider = config["provider"]
         model = config["model"]
-        client = self._get_client(provider)
+        client = self._get_client(provider, api_key)
 
         if provider == "anthropic":
             async with client.messages.stream(

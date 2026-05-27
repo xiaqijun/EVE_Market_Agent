@@ -29,7 +29,7 @@ class MemoryAgent(BaseAgent):
         response = await self._llm_chat(
             system_prompt,
             f"交易历史: {trade_history}\n反馈: {feedback}",
-            max_tokens=1000, temperature=0.3,
+            context=context, max_tokens=1000, temperature=0.3,
         )
         try:
             return json.loads(response)
@@ -45,7 +45,7 @@ class MemoryAgent(BaseAgent):
         response = await self._llm_chat(
             system_prompt,
             f"反馈汇总: {all_feedback}",
-            max_tokens=1000, temperature=0.3,
+            context=context, max_tokens=1000, temperature=0.3,
         )
         try:
             return json.loads(response)

@@ -27,7 +27,7 @@ class ScannerAgent(BaseAgent):
             for c in batch
         )
 
-        response = await self._llm_chat(system_prompt, user_msg, max_tokens=2000, temperature=0.3)
+        response = await self._llm_chat(system_prompt, user_msg, context=context, max_tokens=2000, temperature=0.3)
         try:
             flagged = json.loads(response)
         except json.JSONDecodeError:

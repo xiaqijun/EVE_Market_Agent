@@ -15,15 +15,15 @@ class OrchestratorAgent(BaseAgent):
 
     async def _run(self, context: AgentContext, input_data: dict) -> dict:
         user_message = input_data.get("message", "")
-        pipeline = await self._build_pipeline(user_message)
+        pipeline = await self._build_pipeline(user_message, context)
         return {"pipeline": pipeline, "intent": pipeline[0] if pipeline else "advisor"}
 
-    async def _build_pipeline(self, message: str) -> list[str]:
+    async def _build_pipeline(self, message: str, context: AgentContext = None) -> list[str]:
         system = (
             "分析用户意图，返回需要执行的 Agent 列表（逗号分隔）。"
             "可选: scanner, analyst, advisor, memory。直接返回列表不要解释。"
         )
-        response = await self._llm_chat(system, message, max_tokens=50, temperature=0.1)
+        response = await self._llm_chat(system, message, context=context, max_tokens=50, temperature=0.1)
         agents = [a.strip() for a in response.split(",") if a.strip()]
         return agents or ["advisor"]
 

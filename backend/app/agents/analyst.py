@@ -26,7 +26,7 @@ class AnalystAgent(BaseAgent):
         rag_text = rag_context[:2000] if rag_context else "无"
         user_msg = f"指标数据: {indicators}\n知识库参考: {rag_text}"
 
-        response = await self._llm_chat(system_prompt, user_msg, max_tokens=2000, temperature=0.5)
+        response = await self._llm_chat(system_prompt, user_msg, context=context, max_tokens=2000, temperature=0.5)
         try:
             result = json.loads(response)
         except json.JSONDecodeError:

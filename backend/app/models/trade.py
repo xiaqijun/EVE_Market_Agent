@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, ForeignKey, Text, func
+from sqlalchemy import String, Integer, Float, Boolean, DateTime, BigInteger, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
@@ -45,6 +45,8 @@ class UserTrade(Base):
     broker_fee: Mapped[float] = mapped_column(Float, default=0)
     tax: Mapped[float] = mapped_column(Float, default=0)
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    esi_order_id: Mapped[int] = mapped_column(BigInteger, nullable=True, unique=True)
+    esi_transaction_id: Mapped[int] = mapped_column(BigInteger, nullable=True, unique=True)
 
 
 class FeedbackRecord(Base):

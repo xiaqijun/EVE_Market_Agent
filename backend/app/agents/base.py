@@ -10,6 +10,8 @@ class AgentContext:
     user_profile: dict | None = None
     conversation_history: list[dict] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    llm_api_key: str = ""
+    llm_provider: str = ""
 
 
 class BaseAgent:
@@ -31,10 +33,12 @@ class BaseAgent:
     async def _fallback(self, context: AgentContext, input_data: dict) -> dict:
         return {"error": "agent_unavailable", "mode": self.fallback_mode}
 
-    async def _llm_chat(self, system_prompt: str, user_message: str, **kwargs) -> str:
+    async def _llm_chat(self, system_prompt: str, user_message: str, context: AgentContext = None, **kwargs) -> str:
         if cost_tracker.is_over_budget():
             raise Exception("LLM budget exceeded")
+        api_key = context.llm_api_key if context and context.llm_api_key else ""
+        provider_override = context.llm_provider if context and context.llm_provider else ""
         return await llm_service.chat(self.alias, [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
-        ], **kwargs)
+        ], api_key=api_key, provider_override=provider_override, **kwargs)

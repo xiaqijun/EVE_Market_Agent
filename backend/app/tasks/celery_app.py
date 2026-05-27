@@ -5,7 +5,7 @@ celery_app = Celery(
     "eve_market",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.market_scan", "app.tasks.sde_update", "app.tasks.price_update"]
+    include=["app.tasks.market_scan", "app.tasks.sde_update", "app.tasks.price_update", "app.tasks.asset_sync", "app.tasks.trade_sync"]
 )
 
 celery_app.conf.update(
@@ -24,7 +24,15 @@ celery_app.conf.update(
         },
         "check-sde-update": {
             "task": "app.tasks.sde_update.import_sde_from_ccp",
-            "schedule": 604800.0,  # every week
+            "schedule": 604800.0,
+        },
+        "sync-character-assets": {
+            "task": "app.tasks.asset_sync.sync_character_assets",
+            "schedule": 1800.0,
+        },
+        "sync-character-trades": {
+            "task": "app.tasks.trade_sync.sync_character_trades",
+            "schedule": 900.0,
         },
     },
 )

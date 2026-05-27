@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect, useState } from 'react'
 
 type EventHandler = (data: any) => void
 
@@ -7,6 +7,7 @@ export function useWebSocket(token: string | null, handlers: Record<string, Even
   const reconnectAttempt = useRef(0)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handlersRef = useRef(handlers)
+  const [isConnected, setIsConnected] = useState(false)
 
   handlersRef.current = handlers
 
@@ -18,6 +19,7 @@ export function useWebSocket(token: string | null, handlers: Record<string, Even
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'auth', token }))
       reconnectAttempt.current = 0
+      setIsConnected(true)
     }
 
     ws.onmessage = (event) => {
@@ -32,6 +34,7 @@ export function useWebSocket(token: string | null, handlers: Record<string, Even
 
     ws.onclose = () => {
       wsRef.current = null
+      setIsConnected(false)
       const delay = Math.min(1000 * (2 ** reconnectAttempt.current), 30000)
       reconnectAttempt.current += 1
       reconnectTimer.current = setTimeout(connect, delay)
@@ -59,8 +62,6 @@ export function useWebSocket(token: string | null, handlers: Record<string, Even
       wsRef.current.send(JSON.stringify(data))
     }
   }, [])
-
-  const isConnected = wsRef.current?.readyState === WebSocket.OPEN
 
   return { send, isConnected }
 }
