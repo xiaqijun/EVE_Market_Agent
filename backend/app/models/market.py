@@ -9,7 +9,7 @@ class MarketOrder(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     type_id: Mapped[int] = mapped_column(Integer, index=True)
-    station_id: Mapped[int] = mapped_column(Integer)
+    station_id: Mapped[int] = mapped_column(BigInteger)
     region_id: Mapped[int] = mapped_column(Integer, index=True)
     system_id: Mapped[int] = mapped_column(Integer)
     order_id: Mapped[int] = mapped_column(BigInteger, unique=True)

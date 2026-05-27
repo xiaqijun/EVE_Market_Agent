@@ -5,7 +5,7 @@ celery_app = Celery(
     "eve_market",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.market_scan"]
+    include=["app.tasks.market_scan", "app.tasks.sde_update", "app.tasks.price_update"]
 )
 
 celery_app.conf.update(
@@ -20,7 +20,11 @@ celery_app.conf.update(
     beat_schedule={
         "cleanup-old-orders": {
             "task": "app.tasks.market_scan.cleanup_old_orders",
-            "schedule": 3600.0,  # every hour
+            "schedule": 3600.0,
+        },
+        "check-sde-update": {
+            "task": "app.tasks.sde_update.import_sde_from_ccp",
+            "schedule": 604800.0,  # every week
         },
     },
 )
