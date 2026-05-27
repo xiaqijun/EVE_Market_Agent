@@ -8,3 +8,4 @@ dist/
 logs/
 backups/
 .superpowers/
+.claude/
