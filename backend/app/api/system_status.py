@@ -99,17 +99,67 @@ async def system_status(
 
 
 @router.get("/tasks")
-async def task_status(_: str = Depends(get_current_user)):
-    return {
-        "beat_schedule": {
-            "market_scan": {"interval": "60 min", "description": "扫描 The Forge 市场订单"},
-            "price_update": {"interval": "60 min", "description": "更新热门物品历史价格"},
-            "sde_update": {"interval": "7 days", "description": "更新 SDE 静态数据"},
-            "trade_sync": {"interval": "15 min", "description": "同步角色市场交易"},
-            "asset_sync": {"interval": "30 min", "description": "同步角色资产"},
-            "cleanup_old_orders": {"interval": "60 min", "description": "清理过期订单数据"},
-        },
+async def task_status(db: AsyncSession = Depends(get_db), _: str = Depends(get_current_user)):
+    from app.models.logs import TaskLog
+    schedule = {
+        "market_scan": {"interval": "60 min", "description": "扫描 The Forge 市场订单", "task_path": "app.tasks.market_scan.scan_region_market", "args": [10000002]},
+        "price_update": {"interval": "60 min", "description": "更新热门物品历史价格", "task_path": "app.tasks.price_update.update_market_history", "args": [10000002]},
+        "sde_update": {"interval": "7 days", "description": "更新 SDE 静态数据", "task_path": "app.tasks.sde_update.import_sde_from_ccp", "args": []},
+        "trade_sync": {"interval": "15 min", "description": "同步角色市场交易", "task_path": "app.tasks.trade_sync.sync_character_trades", "args": []},
+        "asset_sync": {"interval": "30 min", "description": "同步角色资产", "task_path": "app.tasks.asset_sync.sync_character_assets", "args": []},
+        "cleanup_old_orders": {"interval": "60 min", "description": "清理过期订单数据", "task_path": "app.tasks.market_scan.cleanup_old_orders", "args": []},
     }
+
+    # Fetch last execution for each task
+    for key, info in schedule.items():
+        r = await db.execute(
+            select(TaskLog)
+            .where(TaskLog.task_name == info["task_path"])
+            .order_by(TaskLog.created_at.desc())
+            .limit(1)
+        )
+        last = r.scalar_one_or_none()
+        if last:
+            info["last_run"] = {
+                "time": last.created_at.isoformat(),
+                "status": last.status,
+                "duration_ms": last.duration_ms,
+                "result": last.result_summary,
+                "error": last.error,
+            }
+        else:
+            info["last_run"] = None
+
+    return {"beat_schedule": schedule}
+
+
+@router.post("/tasks/{task_name}/run")
+async def trigger_task(task_name: str, _: str = Depends(get_current_user)):
+    """Manually trigger a scheduled task."""
+    schedule = {
+        "market_scan": "app.tasks.market_scan.scan_region_market",
+        "price_update": "app.tasks.price_update.update_market_history",
+        "sde_update": "app.tasks.sde_update.import_sde_from_ccp",
+        "trade_sync": "app.tasks.trade_sync.sync_character_trades",
+        "asset_sync": "app.tasks.asset_sync.sync_character_assets",
+        "cleanup_old_orders": "app.tasks.market_scan.cleanup_old_orders",
+    }
+    if task_name not in schedule:
+        raise HTTPException(status_code=404, detail=f"Task '{task_name}' not found")
+
+    task_path = schedule[task_name]
+    module_path, func_name = task_path.rsplit(".", 1)
+    import importlib
+    mod = importlib.import_module(module_path)
+    task_func = getattr(mod, func_name)
+
+    args_map = {
+        "market_scan": [10000002],
+        "price_update": [10000002],
+    }
+    args = args_map.get(task_name, [])
+    result = task_func.delay(*args)
+    return {"task_id": result.id, "task_name": task_name, "status": "queued"}
 
 
 @router.get("/token-usage")
