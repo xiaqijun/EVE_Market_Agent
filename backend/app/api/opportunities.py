@@ -127,8 +127,11 @@ async def trigger_scan(req: ScanRequest, _: str = Depends(get_current_user)):
 
 
 @router.post("/{opportunity_id}/deep-analysis")
-async def deep_analysis(opportunity_id: str, _: str = Depends(get_current_user)):
-    return {"analysis_id": str(uuid.uuid4()), "status": "queued"}
+async def trigger_deep_analysis(opportunity_id: str, _: str = Depends(get_current_user)):
+    """Trigger deep analysis for a specific opportunity."""
+    from app.tasks.deep_analysis import deep_analysis
+    deep_analysis.delay(opportunity_id)
+    return {"status": "queued", "message": "深度分析已加入队列"}
 
 
 @router.post("/{opportunity_id}/feedback")
