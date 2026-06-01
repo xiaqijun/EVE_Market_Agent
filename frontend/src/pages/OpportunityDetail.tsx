@@ -53,8 +53,8 @@ export default function OpportunityDetail() {
             <Row label="利润率" value={o.estimated_profit_pct != null ? `${profitPct.toFixed(2)}%` : "—"} color={profitPct > 0 ? "text-eve-profit" : profitPct < 0 ? "text-eve-danger" : ""} />
             <Row label="成交量置信度" value={`${(o.volume_confidence ?? 0) * 100}%`} />
             <Row label="评分" value={o.recommendation_score != null ? `${o.recommendation_score}/10` : "—"} />
-            <Row label="风险等级" value={o.risk_level === "low" ? "低" : o.risk_level === "medium" ? "中" : o.risk_level === "high" ? "高" : "未评估"}
-              color={o.risk_level === "high" ? "text-eve-danger" : o.risk_level === "low" ? "text-eve-profit" : "text-eve-warning"} />
+            <Row label="风险等级" value={({"low":"低","green":"低","medium":"中","yellow":"中","high":"高","red":"高"} as Record<string,string>)[o.risk_level] ?? "未评估"}
+              color={({"high":"text-eve-danger","red":"text-eve-danger","low":"text-eve-profit","green":"text-eve-profit"} as Record<string,string>)[o.risk_level] ?? "text-eve-warning"} />
           </div>
         </div>
 

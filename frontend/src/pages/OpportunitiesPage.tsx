@@ -85,7 +85,7 @@ export default function OpportunitiesPage() {
                 <div className="text-[11px] text-gray-500 mt-1">
                   {o.type === "arbitrage" ? "区域间套利" : "长期投资分析"}
                   {o.recommendation_score != null && ` · 评分 ${o.recommendation_score}/10`}
-                  {o.risk_level && ` · ${o.risk_level === "low" ? "低风险" : o.risk_level === "medium" ? "中风险" : "高风险"}`}
+                  {o.risk_level && ` · ${({"low":"低风险","green":"低风险","medium":"中风险","yellow":"中风险","high":"高风险","red":"高风险"} as Record<string,string>)[o.risk_level] ?? "未评估"}`}
                 </div>
               </div>
               <div className="text-right flex-shrink-0">
