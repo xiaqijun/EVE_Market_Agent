@@ -27,6 +27,8 @@ class TradeOpportunity(Base):
     triggered_by: Mapped[str] = mapped_column(String(20))
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    analysis_completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    analysis_model: Mapped[str] = mapped_column(String(50), nullable=True)
 
 
 class UserTrade(Base):
