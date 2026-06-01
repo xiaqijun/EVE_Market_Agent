@@ -18,13 +18,30 @@ class AnalystAgent(BaseAgent):
             f"你是 EVE Online 深度市场分析师。分析物品 {item_name}(type_id={type_id})。\n"
             f"用户画像: 风险偏好={user_profile.get('risk_tolerance_score', 0.5)}, "
             f"偏好领域={user_profile.get('preferred_item_groups', [])}\n\n"
-            '返回 JSON: {"recommendation": 1-10, "risk": "low|medium|high", "confidence": 0-1, '
-            '"trend_analysis": "...", "volume_assessment": "...", '
-            '"risk_factors": ["风险1"], "timing_advice": "...", "user_match": "..."}'
+            "输入数据：\n"
+            "- 技术指标：SMA/EMA/RSI/波动率/成交量趋势\n"
+            "- RAG 知识库：市场规律、版本更新影响、历史交易模式\n"
+            "- 订单簿：当前挂单量、买卖价差分布\n"
+            "- 用户画像：风险偏好、交易历史、偏好领域\n\n"
+            '你必须返回纯 JSON（不要添加任何其他文字）：\n'
+            '{\n'
+            '  "trend_analysis": "基于指标的趋势分析，至少3句话",\n'
+            '  "volume_assessment": "成交量和流动性评估，至少2句话",\n'
+            '  "risk_factors": ["风险1", "风险2", "风险3"],\n'
+            '  "timing_advice": "操作时机和策略建议，至少2句话",\n'
+            '  "user_match": "与用户画像的匹配度分析",\n'
+            '  "recommendation": 1-10,\n'
+            '  "confidence": 0.0-1.0\n'
+            '}'
         )
 
         rag_text = rag_context[:2000] if rag_context else "无"
-        user_msg = f"指标数据: {indicators}\n知识库参考: {rag_text}"
+        order_book = input_data.get("order_book", "无订单簿数据")
+        user_msg = (
+            f"指标数据: {indicators}\n"
+            f"订单簿: {order_book}\n"
+            f"知识库参考: {rag_text}"
+        )
 
         response = await self._llm_chat(system_prompt, user_msg, context=context, max_tokens=2000, temperature=0.5)
         try:
