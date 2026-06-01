@@ -106,11 +106,45 @@ async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg
         pass
 
     context = AgentContext(user_id=user_id, session_id=session_id, llm_api_key=llm_api_key, llm_provider=llm_provider)
+
+    # Step 1: OrchestratorAgent - classify intent and build pipeline
     orchestrator = OrchestratorAgent()
     route = await orchestrator.run(context, {"message": message})
+    pipeline = route.get("pipeline", ["advisor"])
+    intent = route.get("intent", "advisor")
 
+    # Step 2: Execute pipeline based on intent
+    analysis_result = {}
+
+    # Run AnalystAgent if intent is analysis
+    if "analyst" in pipeline:
+        from app.agents.analyst import AnalystAgent
+        analyst = AnalystAgent()
+        # Extract type_id from message if available (simplified)
+        analysis_result = await analyst.run(context, {
+            "message": message,
+            "indicators": {},
+            "rag_context": "",
+        })
+
+    # Run MemoryAgent if intent is memory/history
+    if "memory" in pipeline:
+        from app.agents.memory import MemoryAgent
+        memory = MemoryAgent()
+        memory_result = await memory.run(context, {
+            "action": "update_profile",
+            "trade_history": [],
+            "feedback": [],
+        })
+        analysis_result["memory"] = memory_result
+
+    # Step 3: AdvisorAgent - generate final response
     advisor = AdvisorAgent()
-    result = await advisor.run(context, {"message": message, "analysis": route})
+    result = await advisor.run(context, {
+        "message": message,
+        "analysis": route,
+        "analyst_result": analysis_result,
+    })
 
     response_text = result.get("response", "")
     seq = event_seq.get(session_id, 0)
@@ -142,3 +176,12 @@ def _buffer_event(session_id: str, event: dict):
 def broadcast_to_user(user_id: str, event: dict):
     if user_id in connections:
         asyncio.create_task(connections[user_id].send_json(event))
+
+
+async def broadcast_to_all(event: dict):
+    """Broadcast event to all connected authenticated users."""
+    for user_id, ws in list(connections.items()):
+        try:
+            await ws.send_json(event)
+        except Exception:
+            pass  # 连接已断开，忽略
