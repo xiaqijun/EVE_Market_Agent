@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
-from app.models.sde import SdeRegion, SdeItemGroup, SdeItem
+from app.models.sde import SdeCategory, SdeRegion, SdeItemGroup, SdeItem
 from app.models.rag import RagDocument
 from app.middleware.auth import get_current_user
 from app.config import settings
@@ -15,19 +15,22 @@ async def sde_status(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
+    categories_result = await db.execute(select(func.count(SdeCategory.category_id)))
     regions_result = await db.execute(select(func.count(SdeRegion.region_id)))
     groups_result = await db.execute(select(func.count(SdeItemGroup.group_id)))
     items_result = await db.execute(select(func.count(SdeItem.type_id)))
 
+    categories_count = categories_result.scalar() or 0
     regions_count = regions_result.scalar() or 0
     groups_count = groups_result.scalar() or 0
     items_count = items_result.scalar() or 0
 
     return {
+        "categories": categories_count,
         "regions": regions_count,
         "item_groups": groups_count,
         "items": items_count,
-        "ready": regions_count > 0 and items_count > 0,
+        "ready": categories_count > 0 and regions_count > 0 and items_count > 0,
     }
 
 

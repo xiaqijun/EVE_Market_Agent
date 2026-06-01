@@ -1,6 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.sde import SdeItem, SdeRegion, SdeSystem, SdeStation, SdeItemGroup
+from app.models.sde import SdeCategory, SdeItem, SdeRegion, SdeStation, SdeItemGroup
 
 
 async def search_items(db: AsyncSession, query: str, limit: int = 10) -> list[dict]:
@@ -57,3 +57,8 @@ async def search_stations(db: AsyncSession, query: str, limit: int = 10) -> list
     )
     return [{"station_id": s.station_id, "name": s.name, "system_id": s.system_id}
             for s in result.scalars().all()]
+
+
+async def get_all_categories(db: AsyncSession) -> list[dict]:
+    result = await db.execute(select(SdeCategory))
+    return [{"category_id": c.category_id, "name": c.name} for c in result.scalars().all()]

@@ -3,6 +3,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
+class SdeCategory(Base):
+    __tablename__ = "sde_categories"
+    category_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+
+
 class SdeRegion(Base):
     __tablename__ = "sde_regions"
     region_id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -22,7 +28,7 @@ class SdeStation(Base):
     __tablename__ = "sde_stations"
     station_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    system_id: Mapped[int] = mapped_column(Integer, ForeignKey("sde_systems.system_id"))
+    system_id: Mapped[int] = mapped_column(Integer, index=True)
     station_type: Mapped[str] = mapped_column(String(50))
 
 
@@ -30,7 +36,7 @@ class SdeItemGroup(Base):
     __tablename__ = "sde_item_groups"
     group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    category_id: Mapped[int] = mapped_column(Integer, nullable=True)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("sde_categories.category_id"), nullable=True)
 
 
 class SdeItem(Base):
