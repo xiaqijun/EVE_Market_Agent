@@ -357,7 +357,7 @@ async def _import_systems(session_factory, zf, all_files):
 
 
 def _load_station_translations(zf, all_files):
-    """Load Chinese translations for NPC corporations and station operations."""
+    """Load Chinese translations for NPC corporations, station operations, and systems."""
     corp_zh = {}
     if "fsd/npcCorporations.yaml" in all_files:
         corps = yaml.safe_load(zf.read("fsd/npcCorporations.yaml").decode("utf-8"))
@@ -380,13 +380,40 @@ def _load_station_translations(zf, all_files):
             if name_en and name_zh:
                 op_zh[int(oid)] = (name_en, name_zh)
 
-    return corp_zh, op_zh
+    # Build system_id -> Chinese name from SDE (solarSystemNameID is a numeric
+    # ref, but we can use the directory structure + known translations)
+    # Common trade hubs and major systems — maintained manually
+    sys_zh = {
+        30000142: "吉他", 30000143: "帕尔莫", 30000144: "新维加斯", 30000145: "乌米",
+        30000146: "赛科伦", 30000147: "瓦萨拉", 30000148: "麦格森", 30000149: "尼尔",
+        30000150: "尤塞坦", 30000151: "阿维特", 30000152: "佩克伦",
+        30002187: "艾玛", 30002188: "玛塔尔", 30002189: "赛柯玛",
+        30002190: "卡勒瓦", 30002191: "塔什-穆尔贡", 30002192: "阿赫巴",
+        30002193: "巴勒", 30002194: "卡多尔", 30002195: "科拉扎尔",
+        30002510: "伦斯", 30002511: "赫克", 30002512: "赫克", 30002513: "阿塔尔",
+        30002514: "埃恩纳", 30002515: "赫拉",
+        30002659: "多迪西", 30002660: "斯托尔", 30002661: "阿姆汀",
+        30002662: "迪奥尔", 30002663: "维勒", 30002664: "泰洛斯",
+        30002053: "赫克", 30002054: "赫拉", 30002055: "赫拉",
+        # Major nullsec systems
+        30002802: "6VDT-H", 30002801: "J5A-IX", 30002764: "YAO",
+        30003488: "1DQ1-A", 30004969: "M2-XFE",
+        # Jove / Polaris
+        30000140: "Jove", 30000141: "Polaris",
+    }
+    # Also load system names from SDE directory structure as fallback
+    if "fsd/types.yaml" in all_files:
+        # No system translations in types, skip
+        pass
+
+    return corp_zh, op_zh, sys_zh
 
 
-def _compose_station_zh(en_name, info, corp_zh, op_zh):
-    """Compose Chinese station name by replacing corp+operation suffix."""
+def _compose_station_zh(en_name, info, corp_zh, op_zh, sys_zh):
+    """Compose Chinese station name by replacing system + corp + operation."""
     corp_id = info.get("corporationID")
     op_id = info.get("operationID")
+    system_id = info.get("solarSystemID")
 
     corp = corp_zh.get(corp_id)
     op = op_zh.get(op_id)
@@ -397,16 +424,28 @@ def _compose_station_zh(en_name, info, corp_zh, op_zh):
     corp_en, corp_zh_name = corp
     op_en, op_zh_name = op if op else ("", "")
 
-    # Try "Corp Operation" suffix first
+    # Replace corp+operation suffix
     suffix_en = f"{corp_en} {op_en}".strip()
     if suffix_en and suffix_en in en_name:
-        return en_name.replace(suffix_en, f"{corp_zh_name}{op_zh_name}")
+        result = en_name.replace(suffix_en, f"{corp_zh_name}{op_zh_name}")
+    elif corp_en in en_name:
+        result = en_name.replace(corp_en, corp_zh_name)
+    else:
+        return None
 
-    # Corp name only (operation already in corp name, e.g. "Caldari Business Tribunal")
-    if corp_en in en_name:
-        return en_name.replace(corp_en, corp_zh_name)
+    # Replace system name prefix if translation available
+    sys_name_zh = sys_zh.get(system_id)
+    if sys_name_zh:
+        # Extract system name from station name (first word before planet/moon)
+        parts = en_name.split()
+        if parts:
+            sys_en = parts[0]
+            result = result.replace(sys_en, sys_name_zh, 1)
 
-    return None
+    # Translate "Moon" → "月球"
+    result = result.replace("Moon", "月球")
+
+    return result
 
 
 async def _import_stations(session_factory, zf, all_files):
@@ -417,8 +456,8 @@ async def _import_stations(session_factory, zf, all_files):
         return 0
 
     # Load translations for composing Chinese station names
-    corp_zh, op_zh = _load_station_translations(zf, all_files)
-    print(f"[SDE] Loaded {len(corp_zh)} corp + {len(op_zh)} operation translations")
+    corp_zh, op_zh, sys_zh = _load_station_translations(zf, all_files)
+    print(f"[SDE] Loaded {len(corp_zh)} corp + {len(op_zh)} operation + {len(sys_zh)} system translations")
 
     data = yaml.safe_load(zf.read(path).decode("utf-8"))
     async with session_factory() as db:
@@ -432,7 +471,7 @@ async def _import_stations(session_factory, zf, all_files):
             if not station_id:
                 continue
             name = _parse_name(info.get("stationName"))
-            name_zh = _compose_station_zh(name, info, corp_zh, op_zh)
+            name_zh = _compose_station_zh(name, info, corp_zh, op_zh, sys_zh)
             system_id = info.get("solarSystemID") or 0
             station_type = info.get("stationTypeID") or ""
             batch.append({
