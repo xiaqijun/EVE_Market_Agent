@@ -439,6 +439,7 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 status="pending_analysis" if flag == "green" else "active",
             )
             db.add(opp)
+            await db.flush()  # 确保 UUID 生成
             saved_opportunities.append(opp)
             saved += 1
 

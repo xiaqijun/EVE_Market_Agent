@@ -54,24 +54,13 @@ async def _run_deep_analysis(opportunity_id: str):
                 group = group_result.scalar_one_or_none()
                 group_name = group.name if group else ""
 
-            # 3. 并行预取数据
+            # 3. 并行预取数据（每个函数用独立 session 避免事务污染）
             indicators, rag_refs, order_book, user_profile = await asyncio.gather(
-                _fetch_indicators(db, type_id),
-                _fetch_rag(db, item_name, group_name),
-                _fetch_order_book(db, type_id),
-                _fetch_user_profile(db),
-                return_exceptions=True,
+                _fetch_indicators(type_id),
+                _fetch_rag(item_name, group_name),
+                _fetch_order_book(type_id),
+                _fetch_user_profile(),
             )
-
-            # 处理异常
-            if isinstance(indicators, Exception):
-                indicators = {"sma_30": None, "rsi_14": None, "data_points": 0}
-            if isinstance(rag_refs, Exception):
-                rag_refs = []
-            if isinstance(order_book, Exception):
-                order_book = {}
-            if isinstance(user_profile, Exception):
-                user_profile = {"risk_tolerance_score": 0.5, "preferred_item_groups": []}
 
             # 4. 调用 AnalystAgent
             from app.agents.analyst import AnalystAgent
@@ -138,67 +127,102 @@ async def _run_deep_analysis(opportunity_id: str):
         await engine.dispose()
 
 
-async def _fetch_indicators(db, type_id: int) -> dict:
-    """Fetch technical indicators for the item."""
+async def _fetch_indicators(type_id: int) -> dict:
+    """Fetch technical indicators (独立 session)."""
     from app.tools.indicators import fetch_indicators
-    return await fetch_indicators(db, type_id)
-
-
-async def _fetch_rag(db, item_name: str, group_name: str) -> list:
-    """Search RAG knowledge base."""
-    from app.rag.retriever import hybrid_search
+    engine = create_fresh_engine()
     try:
-        query = f"EVE {item_name} {group_name} 市场交易 套利"
-        results = await hybrid_search(db, query, top_k=3)
-        return results
+        async with engine.begin() as conn:
+            from sqlalchemy.ext.asyncio import AsyncSession
+            async with AsyncSession(conn) as db:
+                return await fetch_indicators(db, type_id)
+    except Exception as e:
+        print(f"[DeepAnalysis] 指标获取失败: {e}")
+        return {"sma_30": None, "rsi_14": None, "data_points": 0}
+    finally:
+        await engine.dispose()
+
+
+async def _fetch_rag(item_name: str, group_name: str) -> list:
+    """Search RAG knowledge base (独立 session)."""
+    from app.rag.retriever import hybrid_search
+    engine = create_fresh_engine()
+    try:
+        async with engine.begin() as conn:
+            from sqlalchemy.ext.asyncio import AsyncSession
+            async with AsyncSession(conn) as db:
+                query = f"EVE {item_name} {group_name} 市场交易 套利"
+                return await hybrid_search(db, query, top_k=3)
     except Exception as e:
         print(f"[DeepAnalysis] RAG 搜索失败: {e}")
         return []
+    finally:
+        await engine.dispose()
 
 
-async def _fetch_order_book(db, type_id: int, region_id: int = 10000002) -> dict:
-    """Fetch order book depth."""
-    buy_result = await db.execute(
-        select(
-            func.sum(MarketOrder.volume_remain).label("buy_volume"),
-            func.count(MarketOrder.id).label("buy_count"),
-        ).where(
-            MarketOrder.type_id == type_id,
-            MarketOrder.region_id == region_id,
-            MarketOrder.is_buy_order == True,  # noqa: E712
-        )
-    )
-    buy_row = buy_result.one()
+async def _fetch_order_book(type_id: int, region_id: int = 10000002) -> dict:
+    """Fetch order book depth (独立 session)."""
+    engine = create_fresh_engine()
+    try:
+        async with engine.begin() as conn:
+            from sqlalchemy.ext.asyncio import AsyncSession
+            async with AsyncSession(conn) as db:
+                buy_result = await db.execute(
+                    select(
+                        func.sum(MarketOrder.volume_remain).label("buy_volume"),
+                        func.count(MarketOrder.id).label("buy_count"),
+                    ).where(
+                        MarketOrder.type_id == type_id,
+                        MarketOrder.region_id == region_id,
+                        MarketOrder.is_buy_order.is_(True),
+                    )
+                )
+                buy_row = buy_result.one()
 
-    sell_result = await db.execute(
-        select(
-            func.sum(MarketOrder.volume_remain).label("sell_volume"),
-            func.count(MarketOrder.id).label("sell_count"),
-        ).where(
-            MarketOrder.type_id == type_id,
-            MarketOrder.region_id == region_id,
-            MarketOrder.is_buy_order == False,  # noqa: E712
-        )
-    )
-    sell_row = sell_result.one()
+                sell_result = await db.execute(
+                    select(
+                        func.sum(MarketOrder.volume_remain).label("sell_volume"),
+                        func.count(MarketOrder.id).label("sell_count"),
+                    ).where(
+                        MarketOrder.type_id == type_id,
+                        MarketOrder.region_id == region_id,
+                        MarketOrder.is_buy_order.is_(False),
+                    )
+                )
+                sell_row = sell_result.one()
 
-    return {
-        "buy_volume": int(buy_row[0] or 0),
-        "buy_count": int(buy_row[1] or 0),
-        "sell_volume": int(sell_row[0] or 0),
-        "sell_count": int(sell_row[1] or 0),
-    }
+                return {
+                    "buy_volume": int(buy_row[0] or 0),
+                    "buy_count": int(buy_row[1] or 0),
+                    "sell_volume": int(sell_row[0] or 0),
+                    "sell_count": int(sell_row[1] or 0),
+                }
+    except Exception as e:
+        print(f"[DeepAnalysis] 订单簿获取失败: {e}")
+        return {"buy_volume": 0, "buy_count": 0, "sell_volume": 0, "sell_count": 0}
+    finally:
+        await engine.dispose()
 
 
-async def _fetch_user_profile(db) -> dict:
-    """Fetch user profile or return defaults."""
-    result = await db.execute(select(UserProfile).limit(1))
-    profile = result.scalar_one_or_none()
-    if not profile:
+async def _fetch_user_profile() -> dict:
+    """Fetch user profile or return defaults (独立 session)."""
+    engine = create_fresh_engine()
+    try:
+        async with engine.begin() as conn:
+            from sqlalchemy.ext.asyncio import AsyncSession
+            async with AsyncSession(conn) as db:
+                result = await db.execute(select(UserProfile).limit(1))
+                profile = result.scalar_one_or_none()
+                if not profile:
+                    return {"risk_tolerance_score": 0.5, "preferred_item_groups": []}
+                return {
+                    "risk_tolerance_score": profile.risk_tolerance_score or 0.5,
+                    "preferred_item_groups": profile.preferred_item_groups or [],
+                    "trading_style": profile.trading_style,
+                    "win_rate": profile.win_rate,
+                }
+    except Exception as e:
+        print(f"[DeepAnalysis] 用户画像获取失败: {e}")
         return {"risk_tolerance_score": 0.5, "preferred_item_groups": []}
-    return {
-        "risk_tolerance_score": profile.risk_tolerance_score or 0.5,
-        "preferred_item_groups": profile.preferred_item_groups or [],
-        "trading_style": profile.trading_style,
-        "win_rate": profile.win_rate,
-    }
+    finally:
+        await engine.dispose()

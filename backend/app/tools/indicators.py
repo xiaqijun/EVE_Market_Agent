@@ -66,7 +66,7 @@ async def fetch_indicators(db, type_id: int, region_id: int = 10000002) -> dict:
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     result = await db.execute(
-        text("SELECT average_price, volume, date FROM market_history "
+        text("SELECT average, volume, date FROM market_history "
              "WHERE type_id = :type_id AND region_id = :region_id AND date >= :cutoff "
              "ORDER BY date ASC"),
         {"type_id": type_id, "region_id": region_id, "cutoff": cutoff},
