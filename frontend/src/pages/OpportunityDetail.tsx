@@ -45,7 +45,9 @@ export default function OpportunityDetail() {
         <div className="bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
           <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">价格与利润</h3>
           <div className="space-y-3 text-sm">
+            {o.buy_station_name && <Row label="买入站" value={o.buy_station_name} />}
             {o.buy_price != null && <Row label="买入价" value={`${o.buy_price.toLocaleString()} ISK`} />}
+            {o.sell_station_name && <Row label="卖出站" value={o.sell_station_name} />}
             {o.sell_price != null && <Row label="卖出价" value={`${o.sell_price.toLocaleString()} ISK`} color="text-eve-profit" />}
             {o.estimated_profit != null && <Row label="预估利润" value={`${o.estimated_profit.toLocaleString()} ISK`} color={profitPct > 0 ? "text-eve-profit" : "text-eve-danger"} />}
             <Row label="利润率" value={o.estimated_profit_pct != null ? `${profitPct.toFixed(2)}%` : "—"} color={profitPct > 0 ? "text-eve-profit" : profitPct < 0 ? "text-eve-danger" : ""} />

@@ -75,6 +75,13 @@ export default function OpportunitiesPage() {
                     o.status === "analyzed" ? "text-eve-cyan bg-eve-cyan/10" : "text-gray-500 bg-white/5"
                   }`}>{o.status === "draft" ? "待分析" : o.status === "analyzed" ? "已分析" : o.status}</span>
                 </div>
+                {o.type === "arbitrage" && (o.buy_station_name || o.sell_station_name) && (
+                  <div className="text-[11px] text-gray-400 mt-1">
+                    <span className="text-eve-cyan">买</span> {o.buy_station_name || "未知"}
+                    <span className="text-gray-600 mx-1.5">→</span>
+                    <span className="text-eve-profit">卖</span> {o.sell_station_name || "未知"}
+                  </div>
+                )}
                 <div className="text-[11px] text-gray-500 mt-1">
                   {o.type === "arbitrage" ? "区域间套利" : "长期投资分析"}
                   {o.recommendation_score != null && ` · 评分 ${o.recommendation_score}/10`}
