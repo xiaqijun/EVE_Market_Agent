@@ -133,15 +133,31 @@ await db.execute(
 ```python
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=60)
 def deep_analysis(self, opportunity_id: str):
-    # 1. 查询机会详情
-    # 2. 并行预取数据
-    #    - indicators(type_id) → SMA/EMA/RSI/波动率
-    #    - rag_search(item_name) → 知识库参考
-    #    - order book depth → 挂单分布
-    #    - user profile → 风险偏好
-    # 3. 调用 AnalystAgent
+    """对单个 green 机会执行深度分析。"""
+    # 1. 查询机会详情，检查是否仍为 pending_analysis
+    #    如果已不是 pending_analysis（被兜底升级或删除），直接返回
+
+    # 2. 并行预取数据（asyncio.gather）
+    #    - indicators_daily(type_id, db) from app/tools/indicators.py
+    #      → SMA/EMA/RSI/波动率/成交量趋势
+    #    - hybrid_search(f"EVE {item_name} {group_name} 市场交易 套利", db)
+    #      from app/rag/retriever.py → top 3 知识库参考
+    #    - SELECT * FROM market_orders WHERE type_id=... AND region_id=...
+    #      → 订单簿深度（挂单量、买卖价差分布）
+    #    - SELECT * FROM user_profiles LIMIT 1
+    #      → 用户画像（不存在则用默认值）
+
+    # 3. 调用 AnalystAgent (Claude Sonnet)
+    #    输入: type_id, item_name, indicators, rag_context, order_book, user_profile
+    #    输出: 结构化 JSON
+
     # 4. 更新 DB
-    # 5. WebSocket 推送
+    #    status = "active"
+    #    agent_analysis = JSON 字符串
+    #    analysis_model = "claude-sonnet"
+    #    analysis_completed_at = now()
+
+    # 5. WebSocket 推送 opportunity.updated（失败不阻塞）
 ```
 
 ### 4. 前端渲染逻辑
@@ -189,7 +205,18 @@ await broadcast({
 })
 ```
 
-前端监听 `opportunity.updated` 事件，自动刷新对应机会的分析内容。
+前端监听 `opportunity.updated` 事件，收到后 refetch 单个机会数据（`GET /api/v1/opportunities/{id}`），替换分析卡片内容。
+
+### 6. 数据源函数映射
+
+| 数据 | 函数/查询 | 文件 |
+|------|----------|------|
+| 技术指标 | `indicators_daily(type_id, db)` | `app/tools/indicators.py` |
+| RAG 知识库 | `hybrid_search(query, db, limit=3)` | `app/rag/retriever.py` |
+| 订单簿 | `SELECT * FROM market_orders WHERE type_id=... AND region_id=...` | 直接 SQL |
+| 用户画像 | `SELECT * FROM user_profiles LIMIT 1` | 直接 SQL，不存在用默认值 |
+
+RAG 搜索查询格式：`f"EVE {item_name} {group_name} 市场交易 套利"`
 
 ## AnalystAgent 系统提示调整
 
@@ -228,16 +255,18 @@ system_prompt = """你是 EVE Online 深度市场分析师。
   - 标注 "⏳ 深度分析进行中，完成后自动更新"
   - WebSocket 收到 `opportunity.updated` 后自动替换为完整卡片
 
-## 成本估算
+## 成本控制
 
-| 项目 | 模型 | 每次调用 | 每小时（~5 green） | 每天 |
-|------|------|---------|-------------------|------|
+**限制每个扫描周期最多 3 个深度分析**（取 recommendation_score 最高的 3 个 green 机会）。
+
+| 项目 | 模型 | 每次调用 | 每小时（~3 green × 6 次） | 每天 |
+|------|------|---------|--------------------------|------|
 | ScannerAgent | DeepSeek | ~$0.001 | ~$0.006 | ~$0.14 |
-| AnalystAgent | Sonnet | ~$0.01 | ~$0.30 | ~$7.20 |
-| RAG embedding | text-embedding-3-small | ~$0.0001 | ~$0.003 | ~$0.07 |
-| **总计** | | | ~$0.31 | ~$7.41 |
+| AnalystAgent | Sonnet | ~$0.01 | ~$1.08 | ~$25.92 |
+| RAG embedding | text-embedding-3-small | ~$0.0001 | ~$0.01 | ~$0.22 |
+| **总计** | | | ~$1.10 | ~$26.28 |
 
-每天约 $7-8 的 LLM 成本，可控。
+每天约 $26 的 LLM 成本。如果觉得过高，可将限制改为每周期 1 个深度分析（~$9/天）。
 
 ## 边界情况处理
 
@@ -252,6 +281,10 @@ system_prompt = """你是 EVE Online 深度市场分析师。
 5. **WebSocket 推送失败** — 非阻塞，推送失败不影响任务完成。前端仍可通过轮询（60s 刷新）获取更新。
 
 6. **pending_analysis 超过 30 分钟兜底** — 用 ScannerAgent 的快速分析 JSON 升级，`mode` 保持 `"quick_scan"`，用户看到的是快速分析而非空状态。
+
+7. **机会在分析过程中被删除** — `deep_analysis` 任务开头查询机会，如果不存在或 status 不是 `pending_analysis`，直接 return，不报错。
+
+8. **每个周期限制 3 个深度分析** — ScannerAgent 筛选完 green 后，按 `recommendation_score` 降序排列，只对前 3 个调用 `deep_analysis.delay()`，其余 green 机会降级为 `active` + `quick_scan`。
 
 ## 数据库迁移
 
