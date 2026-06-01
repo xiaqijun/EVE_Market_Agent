@@ -28,6 +28,7 @@ class SdeStation(Base):
     __tablename__ = "sde_stations"
     station_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    name_zh: Mapped[str] = mapped_column(String(200), nullable=True)
     system_id: Mapped[int] = mapped_column(Integer, index=True)
     station_type: Mapped[str] = mapped_column(String(50))
 

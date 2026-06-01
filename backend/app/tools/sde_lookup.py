@@ -52,10 +52,13 @@ async def get_item_groups(db: AsyncSession) -> list[dict]:
 
 
 async def search_stations(db: AsyncSession, query: str, limit: int = 10) -> list[dict]:
+    from sqlalchemy import or_
     result = await db.execute(
-        select(SdeStation).where(SdeStation.name.ilike(f"%{query}%")).limit(limit)
+        select(SdeStation).where(
+            or_(SdeStation.name.ilike(f"%{query}%"), SdeStation.name_zh.ilike(f"%{query}%"))
+        ).limit(limit)
     )
-    return [{"station_id": s.station_id, "name": s.name, "system_id": s.system_id}
+    return [{"station_id": s.station_id, "name": s.name_zh or s.name, "system_id": s.system_id}
             for s in result.scalars().all()]
 
 

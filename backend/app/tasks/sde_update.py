@@ -356,12 +356,69 @@ async def _import_systems(session_factory, zf, all_files):
         return count
 
 
+def _load_station_translations(zf, all_files):
+    """Load Chinese translations for NPC corporations and station operations."""
+    corp_zh = {}
+    if "fsd/npcCorporations.yaml" in all_files:
+        corps = yaml.safe_load(zf.read("fsd/npcCorporations.yaml").decode("utf-8"))
+        for cid, info in corps.items():
+            if not isinstance(info, dict):
+                continue
+            name_en = info.get("nameID", {}).get("en", "")
+            name_zh = info.get("nameID", {}).get("zh", "")
+            if name_en and name_zh:
+                corp_zh[int(cid)] = (name_en, name_zh)
+
+    op_zh = {}
+    if "fsd/stationOperations.yaml" in all_files:
+        ops = yaml.safe_load(zf.read("fsd/stationOperations.yaml").decode("utf-8"))
+        for oid, info in ops.items():
+            if not isinstance(info, dict):
+                continue
+            name_en = info.get("operationNameID", {}).get("en", "")
+            name_zh = info.get("operationNameID", {}).get("zh", "")
+            if name_en and name_zh:
+                op_zh[int(oid)] = (name_en, name_zh)
+
+    return corp_zh, op_zh
+
+
+def _compose_station_zh(en_name, info, corp_zh, op_zh):
+    """Compose Chinese station name by replacing corp+operation suffix."""
+    corp_id = info.get("corporationID")
+    op_id = info.get("operationID")
+
+    corp = corp_zh.get(corp_id)
+    op = op_zh.get(op_id)
+
+    if not corp:
+        return None
+
+    corp_en, corp_zh_name = corp
+    op_en, op_zh_name = op if op else ("", "")
+
+    # Try "Corp Operation" suffix first
+    suffix_en = f"{corp_en} {op_en}".strip()
+    if suffix_en and suffix_en in en_name:
+        return en_name.replace(suffix_en, f"{corp_zh_name}{op_zh_name}")
+
+    # Corp name only (operation already in corp name, e.g. "Caldari Business Tribunal")
+    if corp_en in en_name:
+        return en_name.replace(corp_en, corp_zh_name)
+
+    return None
+
+
 async def _import_stations(session_factory, zf, all_files):
-    """Import stations from SDE."""
+    """Import stations from SDE, composing Chinese names from corp+operation translations."""
     path = "bsd/staStations.yaml"
     if path not in all_files:
-        print(f"[SDE] Skipping stations: {path} not found")
+        print("[SDE] Skipping stations: {path} not found")
         return 0
+
+    # Load translations for composing Chinese station names
+    corp_zh, op_zh = _load_station_translations(zf, all_files)
+    print(f"[SDE] Loaded {len(corp_zh)} corp + {len(op_zh)} operation translations")
 
     data = yaml.safe_load(zf.read(path).decode("utf-8"))
     async with session_factory() as db:
@@ -375,11 +432,13 @@ async def _import_stations(session_factory, zf, all_files):
             if not station_id:
                 continue
             name = _parse_name(info.get("stationName"))
+            name_zh = _compose_station_zh(name, info, corp_zh, op_zh)
             system_id = info.get("solarSystemID") or 0
             station_type = info.get("stationTypeID") or ""
             batch.append({
                 "station_id": int(station_id),
                 "name": name,
+                "name_zh": name_zh,
                 "system_id": int(system_id),
                 "station_type": str(station_type),
             })
