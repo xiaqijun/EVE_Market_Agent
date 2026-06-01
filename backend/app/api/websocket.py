@@ -111,7 +111,6 @@ async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg
     orchestrator = OrchestratorAgent()
     route = await orchestrator.run(context, {"message": message})
     pipeline = route.get("pipeline", ["advisor"])
-    intent = route.get("intent", "advisor")
 
     # Step 2: Execute pipeline based on intent
     analysis_result = {}

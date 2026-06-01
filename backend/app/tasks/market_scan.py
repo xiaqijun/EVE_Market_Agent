@@ -131,6 +131,7 @@ def cleanup_old_orders():
 
 
 async def _async_cleanup(session_factory):
+    from app.models.trade import TradeOpportunity
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     async with session_factory() as db:
         # Cleanup old market orders
@@ -203,10 +204,10 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         subq = (
             select(
                 MarketOrder.type_id,
-                func.min(MarketOrder.price).filter(MarketOrder.is_buy_order == False).label("min_sell"),
-                func.max(MarketOrder.price).filter(MarketOrder.is_buy_order == True).label("max_buy"),
-                func.sum(MarketOrder.volume_remain).filter(MarketOrder.is_buy_order == True).label("buy_volume"),
-                func.sum(MarketOrder.volume_remain).filter(MarketOrder.is_buy_order == False).label("sell_volume"),
+                func.min(MarketOrder.price).filter(MarketOrder.is_buy_order.is_(False)).label("min_sell"),
+                func.max(MarketOrder.price).filter(MarketOrder.is_buy_order.is_(True)).label("max_buy"),
+                func.sum(MarketOrder.volume_remain).filter(MarketOrder.is_buy_order.is_(True)).label("buy_volume"),
+                func.sum(MarketOrder.volume_remain).filter(MarketOrder.is_buy_order.is_(False)).label("sell_volume"),
             )
             .where(MarketOrder.region_id == region_id)
             .group_by(MarketOrder.type_id)
@@ -233,7 +234,7 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 .where(
                     MarketOrder.type_id == type_id,
                     MarketOrder.region_id == region_id,
-                    MarketOrder.is_buy_order == True,
+                    MarketOrder.is_buy_order.is_(True),
                 )
                 .order_by(MarketOrder.price.desc())
                 .limit(1)
@@ -246,7 +247,7 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 .where(
                     MarketOrder.type_id == type_id,
                     MarketOrder.region_id == region_id,
-                    MarketOrder.is_buy_order == False,
+                    MarketOrder.is_buy_order.is_(False),
                 )
                 .order_by(MarketOrder.price)
                 .limit(1)
@@ -355,7 +356,6 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         # Run ScannerAgent
         from app.agents.scanner import ScannerAgent
         from app.agents.base import AgentContext
-        from app.models.rag import UserSettings
 
         # Load API key from database
         settings_result = await db.execute(select(UserSettings).limit(1))
