@@ -52,3 +52,19 @@ def test_volume_trend_up():
 def test_volume_trend_insufficient():
     result = calc_volume_trend([100], window=7)
     assert result == "insufficient_data"
+
+
+@pytest.mark.asyncio
+async def test_fetch_indicators_returns_dict():
+    """fetch_indicators should return a dict with indicator keys."""
+    from app.tools.indicators import fetch_indicators
+    from unittest.mock import AsyncMock, MagicMock
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.fetchall = MagicMock(return_value=[])
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    result = await fetch_indicators(mock_db, type_id=34)
+    assert isinstance(result, dict)
+    assert "sma_30" in result
+    assert "rsi_14" in result
+    assert "data_points" in result

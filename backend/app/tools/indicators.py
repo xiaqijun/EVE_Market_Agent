@@ -53,3 +53,53 @@ def calc_volume_trend(volumes: list[int], window: int = 7) -> str:
     elif recent_avg < prior_avg * 0.8:
         return "down"
     return "flat"
+
+
+async def fetch_indicators(db, type_id: int, region_id: int = 10000002) -> dict:
+    """Fetch 30-day price history from DB and compute technical indicators.
+
+    Returns dict with keys: sma_30, ema_15, rsi_14, volatility_30d, volume_trend, prices, volumes, data_points.
+    Returns empty values if insufficient data.
+    """
+    from sqlalchemy import text
+    from datetime import datetime, timezone, timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    result = await db.execute(
+        text("SELECT average_price, volume, date FROM market_history "
+             "WHERE type_id = :type_id AND region_id = :region_id AND date >= :cutoff "
+             "ORDER BY date ASC"),
+        {"type_id": type_id, "region_id": region_id, "cutoff": cutoff},
+    )
+    rows = result.fetchall()
+
+    if not rows:
+        return {
+            "sma_30": None, "ema_15": None, "rsi_14": None,
+            "volatility_30d": None, "volume_trend": "insufficient_data",
+            "prices": [], "volumes": [], "data_points": 0,
+        }
+
+    prices = [float(r[0]) for r in rows if r[0]]
+    volumes = [int(r[1]) for r in rows if r[1]]
+
+    if len(prices) < 2:
+        return {
+            "sma_30": None, "ema_15": None, "rsi_14": None,
+            "volatility_30d": None, "volume_trend": "insufficient_data",
+            "prices": prices, "volumes": volumes, "data_points": len(prices),
+        }
+
+    sma_vals = calc_sma(prices, min(30, len(prices)))
+    ema_vals = calc_ema(prices, min(15, len(prices)))
+
+    return {
+        "sma_30": round(sma_vals[-1], 2) if sma_vals else None,
+        "ema_15": round(ema_vals[-1], 2) if ema_vals else None,
+        "rsi_14": round(calc_rsi(prices, min(14, len(prices) - 1)), 1),
+        "volatility_30d": round(calc_volatility(prices, min(20, len(prices))), 4),
+        "volume_trend": calc_volume_trend(volumes, min(7, len(volumes))),
+        "prices": prices,
+        "volumes": volumes,
+        "data_points": len(prices),
+    }
