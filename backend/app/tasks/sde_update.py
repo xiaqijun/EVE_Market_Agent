@@ -442,8 +442,8 @@ def _compose_station_zh(en_name, info, corp_zh, op_zh, sys_zh):
             sys_en = parts[0]
             result = result.replace(sys_en, sys_name_zh, 1)
 
-    # Translate "Moon" → "月球"
-    result = result.replace("Moon", "月球")
+    # Translate "Moon" → "卫星"
+    result = result.replace("Moon", "卫星")
 
     return result
 
