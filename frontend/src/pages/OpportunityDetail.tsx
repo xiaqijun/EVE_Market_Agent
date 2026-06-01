@@ -38,7 +38,7 @@ export default function OpportunityDetail() {
         <h1 className="font-display text-lg font-semibold tracking-wider">{itemName(o.type_id)} · {o.type === "arbitrage" ? "套利" : "投资"}</h1>
         <span className={`text-[10px] px-2 py-0.5 rounded font-display tracking-wider border ${
           o.status === "analyzed" ? "text-eve-cyan border-eve-cyan/30 bg-eve-cyan/10" : "text-gray-400 border-white/10 bg-white/5"
-        }`}>{o.status === "draft" ? "待分析" : o.status === "analyzed" ? "已分析" : o.status}</span>
+        }`}>{o.status === "draft" ? "待分析" : o.status === "pending_analysis" ? "⏳ 分析中" : o.status === "analyzed" ? "已分析" : o.status}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -73,12 +73,34 @@ export default function OpportunityDetail() {
           )}
         </div>
 
-        {o.agent_analysis && (
-          <div className="col-span-2 bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
-            <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">AI 分析报告</h3>
-            <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{o.agent_analysis}</div>
-          </div>
-        )}
+        {o.agent_analysis && (() => {
+          let analysisData: any = null
+          let isStructured = false
+          try {
+            analysisData = JSON.parse(o.agent_analysis)
+            isStructured = analysisData.mode === "full_analysis"
+          } catch { /* 纯文本 fallback */ }
+
+          return (
+            <div className="col-span-2 bg-eve-card border border-white/5 rounded-xl p-6 backdrop-blur-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-display text-[13px] font-semibold tracking-wider">AI 分析报告</h3>
+                <span className={`text-[10px] px-2 py-0.5 rounded font-display tracking-wider ${
+                  isStructured ? "text-eve-cyan bg-eve-cyan/10" : "text-gray-500 bg-white/5"
+                }`}>
+                  {isStructured ? "深度分析" : "快速扫描"}
+                </span>
+              </div>
+              {isStructured ? (
+                <AnalysisCards data={analysisData} />
+              ) : (
+                <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
+                  {typeof o.agent_analysis === "string" ? o.agent_analysis : JSON.stringify(o.agent_analysis)}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         <div className="col-span-2 flex gap-3">
           <button className="px-6 py-2.5 bg-eve-gold/20 border border-eve-gold/30 text-eve-gold font-display text-xs rounded-lg tracking-wider hover:bg-eve-gold/30 transition-colors">追踪机会</button>
@@ -87,6 +109,47 @@ export default function OpportunityDetail() {
           <button className="px-6 py-2.5 bg-white/5 border border-white/10 text-gray-400 font-display text-xs rounded-lg tracking-wider hover:bg-white/10 transition-colors">忽略</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AnalysisCards({ data }: { data: any }) {
+  return (
+    <div className="space-y-4">
+      {data.trend_analysis && (
+        <div className="bg-white/5 rounded-lg p-4">
+          <h4 className="text-xs font-display tracking-wider text-eve-cyan mb-2">📈 趋势分析</h4>
+          <p className="text-sm text-gray-300 leading-relaxed">{data.trend_analysis}</p>
+        </div>
+      )}
+      {data.volume_assessment && (
+        <div className="bg-white/5 rounded-lg p-4">
+          <h4 className="text-xs font-display tracking-wider text-eve-cyan mb-2">📊 流动性评估</h4>
+          <p className="text-sm text-gray-300 leading-relaxed">{data.volume_assessment}</p>
+        </div>
+      )}
+      {data.risk_factors && data.risk_factors.length > 0 && (
+        <div className="bg-white/5 rounded-lg p-4">
+          <h4 className="text-xs font-display tracking-wider text-eve-warning mb-2">⚠️ 风险因素</h4>
+          <ul className="text-sm text-gray-300 space-y-1">
+            {data.risk_factors.map((r: string, i: number) => (
+              <li key={i}>• {r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.timing_advice && (
+        <div className="bg-white/5 rounded-lg p-4">
+          <h4 className="text-xs font-display tracking-wider text-eve-profit mb-2">🎯 操作建议</h4>
+          <p className="text-sm text-gray-300 leading-relaxed">{data.timing_advice}</p>
+        </div>
+      )}
+      {data.user_match && (
+        <div className="bg-white/5 rounded-lg p-4">
+          <h4 className="text-xs font-display tracking-wider text-gray-400 mb-2">👤 用户匹配</h4>
+          <p className="text-sm text-gray-300 leading-relaxed">{data.user_match}</p>
+        </div>
+      )}
     </div>
   )
 }

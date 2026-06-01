@@ -73,7 +73,7 @@ export default function OpportunitiesPage() {
                   <span className="text-sm font-medium">{itemName(o.type_id)}</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-display tracking-wider ${
                     o.status === "analyzed" ? "text-eve-cyan bg-eve-cyan/10" : "text-gray-500 bg-white/5"
-                  }`}>{o.status === "draft" ? "待分析" : o.status === "analyzed" ? "已分析" : o.status}</span>
+                  }`}>{o.status === "draft" ? "待分析" : o.status === "pending_analysis" ? "⏳ 分析中" : o.status === "analyzed" ? "已分析" : o.status}</span>
                 </div>
                 {o.type === "arbitrage" && (o.buy_station_name || o.sell_station_name) && (
                   <div className="text-[11px] text-gray-400 mt-1">
