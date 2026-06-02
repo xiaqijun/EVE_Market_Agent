@@ -40,6 +40,9 @@ def enqueue_market_types():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            # Load/reload character tokens for authenticated requests
+            if esi_client._char_token_mgr.needs_reload:
+                loop.run_until_complete(esi_client.load_character_tokens())
             result = loop.run_until_complete(_run_with_engine(_async_enqueue))
         finally:
             loop.close()

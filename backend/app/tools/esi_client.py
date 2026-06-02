@@ -12,6 +12,7 @@ import httpx
 from typing import Optional
 from app.config import settings
 from app.tools.rate_limiter import EsiRateManager
+from app.tools.token_manager import CharacterTokenManager
 
 ESI_BASE = "https://esi.evetech.net/latest"
 
@@ -45,10 +46,20 @@ class EsiClient:
         self._token_pool = TokenPool()
         self._rate_manager = EsiRateManager()
         self._etag_cache: dict[str, str] = {}  # path+page -> ETag
+        self._char_token_mgr = CharacterTokenManager()
 
     def add_token(self, token: str):
         """Add a user token to the pool."""
         self._token_pool.add_token(token)
+
+    async def load_character_tokens(self) -> int:
+        """Load character tokens from DB for authenticated requests."""
+        return await self._char_token_mgr.load_from_db()
+
+    def _get_auth_token(self) -> str | None:
+        """Get next available character token for authenticated requests."""
+        tok = self._char_token_mgr.get_next()
+        return tok.access_token if tok else None
 
     async def _make_request(
         self,
@@ -145,8 +156,12 @@ class EsiClient:
             if etag:
                 headers["If-None-Match"] = etag
 
+            # Use authenticated token if available (separate rate bucket)
+            auth_token = self._get_auth_token()
+            group = f"market-auth-{auth_token[:8]}" if auth_token else "market-order"
+
             response = await self._make_request(
-                "GET", path, group="market-order", params=params, headers=headers
+                "GET", path, group=group, token=auth_token, params=params, headers=headers
             )
 
             # Update cache state
