@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Float, Boolean, ForeignKey
+from sqlalchemy import String, Integer, BigInteger, Float, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -26,7 +26,7 @@ class SdeSystem(Base):
 
 class SdeStation(Base):
     __tablename__ = "sde_stations"
-    station_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    station_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     name_zh: Mapped[str] = mapped_column(String(200), nullable=True)
     system_id: Mapped[int] = mapped_column(Integer, index=True)

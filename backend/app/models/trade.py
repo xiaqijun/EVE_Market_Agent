@@ -39,7 +39,7 @@ class UserTrade(Base):
     character_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("eve_characters.id"), nullable=True)
     opportunity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("trade_opportunities.id"), nullable=True)
     type_id: Mapped[int] = mapped_column(Integer)
-    station_id: Mapped[int] = mapped_column(Integer)
+    station_id: Mapped[int] = mapped_column(BigInteger)
     is_buy: Mapped[bool] = mapped_column(Boolean)
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[float] = mapped_column(Float)
