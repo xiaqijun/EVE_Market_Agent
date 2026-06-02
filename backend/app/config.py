@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     scan_region_id: int = 10000002  # 默认扫描区域 (Forge)
     scan_regions: str = "10000002,10000043,10000032,10000042,10000030"  # 多区域列表
 
+    # Queue-based market fetch
+    market_fetch_regions: str = "10000002,10000043,10000032,10000042,10000030"
+    market_fetch_concurrency: int = 3  # Worker concurrency for fetch_type_orders
+    market_high_freq_types: int = 50  # Top N types → every 1 min
+    market_mid_freq_types: int = 300  # Top M types → every 10 min
+
     @property
     def database_url(self) -> str:
         return (

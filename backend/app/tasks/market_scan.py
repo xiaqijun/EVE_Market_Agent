@@ -1,38 +1,168 @@
+"""Market order fetching — queue-based per-type_id approach.
+
+Architecture:
+  enqueue_market_types (Beat, 1 min) → Redis List → fetch_type_orders (Worker, concurrent)
+"""
+
 import asyncio
 import json as json_module
+import redis
 from datetime import datetime, timezone, timedelta
 from app.tasks.celery_app import celery_app
 from app.tasks.task_lock import acquire_task_lock, release_task_lock
 from app.tools.esi_client import esi_client
 from app.database import create_fresh_engine, create_fresh_session
 from app.models.market import MarketOrder
+from app.config import settings
 from sqlalchemy import delete, update
 
+_redis = redis.from_url(settings.redis_url)
+QUEUE_KEY = "market_fetch_queue"
+QUEUE_SET = "market_fetch_in_queue"  # Redis SET for dedup
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
-def scan_region_market(self, region_id: int, type_ids: list[int] | None = None):
-    task_name = f"scan_region_market_{region_id}"
-    if not acquire_task_lock(task_name, timeout=600):
-        return f"跳过: {task_name} 正在执行中"
+# --- Tier config ---
+HIGH_FREQ = settings.market_high_freq_types  # top N → every 1 min
+MID_FREQ = settings.market_mid_freq_types  # top M → every 10 min
+# Everything else → every 30 min
+
+
+# ============================================================
+# Producer: enqueue type_ids into Redis queue
+# ============================================================
+
+
+@celery_app.task
+def enqueue_market_types():
+    """Determine which type_ids need fetching and push into Redis queue."""
+    if not acquire_task_lock("enqueue_market_types", timeout=120):
+        return "跳过: enqueue 正在执行中"
     try:
-        from app.tasks.task_logger import set_task_context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(_run_with_engine(_async_enqueue))
+        finally:
+            loop.close()
+        return result
+    finally:
+        release_task_lock("enqueue_market_types")
 
+
+async def _async_enqueue(session_factory):
+    from sqlalchemy import select, func
+
+    region_ids = [int(r.strip()) for r in settings.market_fetch_regions.split(",") if r.strip()]
+
+    # Get active type_ids from market_orders, ranked by order count
+    async with session_factory() as db:
+        result = await db.execute(
+            select(MarketOrder.type_id, func.count(MarketOrder.id).label("cnt"))
+            .where(MarketOrder.fetched_at > datetime.now(timezone.utc) - timedelta(hours=24))
+            .group_by(MarketOrder.type_id)
+            .order_by(func.count(MarketOrder.id).desc())
+        )
+        ranked_types = [row[0] for row in result.fetchall()]
+
+    # Fallback: if no market data yet, use SDE top types
+    if not ranked_types:
+        from app.models.sde import SdeItem
+
+        async with session_factory() as db:
+            result = await db.execute(
+                select(SdeItem.type_id).where(SdeItem.is_published.is_(True)).limit(500)
+            )
+            ranked_types = [row[0] for row in result.fetchall()]
+
+    if not ranked_types:
+        return "无物品数据"
+
+    # Determine tier for each type
+    now_minute = datetime.now(timezone.utc).minute
+    enqueued = 0
+
+    # Clear the dedup set
+    _redis.delete(QUEUE_SET)
+
+    for i, type_id in enumerate(ranked_types):
+        # Determine frequency tier
+        if i < HIGH_FREQ:
+            pass  # high freq: every 1 min → always enqueue
+        elif i < MID_FREQ:
+            # mid freq: every 10 min → enqueue when minute % 10 == 0
+            if now_minute % 10 != 0:
+                continue
+        else:
+            # low freq: every 30 min → enqueue when minute % 30 == 0
+            if now_minute % 30 != 0:
+                continue
+
+        # Enqueue for each region
+        for region_id in region_ids:
+            key = f"{type_id}:{region_id}"
+            if _redis.sadd(QUEUE_SET, key):
+                _redis.rpush(QUEUE_KEY, key)
+                enqueued += 1
+
+    # Set queue expiry (auto-cleanup if worker doesn't drain)
+    _redis.expire(QUEUE_KEY, 600)
+    _redis.expire(QUEUE_SET, 600)
+
+    return f"入队 {enqueued} 个任务 (高频 {min(HIGH_FREQ, len(ranked_types))} / 中频 {min(MID_FREQ - HIGH_FREQ, max(0, len(ranked_types) - HIGH_FREQ))} / 低频 {max(0, len(ranked_types) - MID_FREQ)})"
+
+
+# ============================================================
+# Consumer: fetch orders for a single type_id
+# ============================================================
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=10)
+def fetch_type_orders(self):
+    """Pop a type_id:region_id from queue and fetch its orders."""
+    # Pop from queue
+    item = _redis.lpop(QUEUE_KEY)
+    if not item:
+        return "队列为空"
+
+    key = item.decode() if isinstance(item, bytes) else item
+    parts = key.split(":")
+    if len(parts) != 2:
+        return f"无效队列项: {key}"
+
+    type_id = int(parts[0])
+    region_id = int(parts[1])
+
+    try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             result = loop.run_until_complete(
-                _run_with_engine(_async_scan_region, region_id, type_ids)
+                _run_with_engine(_async_fetch_type, type_id, region_id)
             )
         finally:
             loop.close()
-        set_task_context(
-            self.request.id,
-            result_summary=result,
-            metadata={"region_id": region_id, "type_ids": type_ids},
-        )
         return result
-    finally:
-        release_task_lock(task_name)
+    except Exception:
+        # Re-queue on failure
+        _redis.rpush(QUEUE_KEY, key)
+        raise
+
+
+async def _async_fetch_type(session_factory, type_id: int, region_id: int):
+    """Fetch orders for a single type_id in a region and upsert to DB."""
+    orders = await esi_client.get_all_market_orders(region_id, type_id)
+
+    async with session_factory() as db:
+        await _store_orders(db, orders, region_id)
+        await db.commit()
+
+    buy_count = sum(1 for o in orders if o.get("is_buy_order"))
+    sell_count = len(orders) - buy_count
+    return f"type_id={type_id} region={region_id}: {len(orders)} 条 ({buy_count}买/{sell_count}卖)"
+
+
+# ============================================================
+# Shared utilities (unchanged)
+# ============================================================
 
 
 async def _run_with_engine(async_fn, *args):
@@ -42,37 +172,6 @@ async def _run_with_engine(async_fn, *args):
         return await async_fn(session_factory, *args)
     finally:
         await engine.dispose()
-
-
-async def _async_scan_region(session_factory, region_id: int, type_ids: list[int] | None):
-    batch_time = datetime.now(timezone.utc)
-
-    orders = []
-    if type_ids:
-        for tid in type_ids:
-            orders.extend(await esi_client.get_all_market_orders(region_id, tid))
-    else:
-        orders = await esi_client.get_all_market_orders(region_id)
-
-    unique_types = len(set(o["type_id"] for o in orders))
-    buy_count = sum(1 for o in orders if o.get("is_buy_order"))
-    sell_count = len(orders) - buy_count
-
-    async with session_factory() as db:
-        # Incremental upsert: update existing, insert new
-        await _store_orders(db, orders, region_id)
-        # Remove stale orders not seen in this batch (10 min grace window)
-        stale_cutoff = batch_time - timedelta(minutes=10)
-        result = await db.execute(
-            delete(MarketOrder).where(
-                MarketOrder.region_id == region_id,
-                MarketOrder.fetched_at < stale_cutoff,
-            )
-        )
-        stale_deleted = result.rowcount
-        await db.commit()
-
-    return f"扫描完成: {len(orders)} 条订单, {unique_types} 种物品, {buy_count} 买单 / {sell_count} 卖单, 清理 {stale_deleted} 条过期"
 
 
 def _parse_datetime(val):
@@ -96,7 +195,6 @@ async def _store_orders(db, orders: list, region_id: int = 0):
     rows = {}
     for o in orders:
         oid = int(o["order_id"])
-        # Deduplicate: keep latest if duplicate order_id
         rows[oid] = {
             "type_id": o["type_id"],
             "station_id": int(o.get("location_id", 0)),
@@ -115,8 +213,6 @@ async def _store_orders(db, orders: list, region_id: int = 0):
         }
 
     unique_rows = list(rows.values())
-
-    # Batch upsert (asyncpg limit: 32767 params, 14 cols per row -> ~2000 rows max)
     for i in range(0, len(unique_rows), 2000):
         batch = unique_rows[i : i + 2000]
         stmt = pg_insert(MarketOrder.__table__).values(batch)
@@ -126,6 +222,11 @@ async def _store_orders(db, orders: list, region_id: int = 0):
             set_=update_cols,
         )
         await db.execute(stmt)
+
+
+# ============================================================
+# Cleanup (unchanged)
+# ============================================================
 
 
 @celery_app.task
@@ -149,11 +250,9 @@ async def _async_cleanup(session_factory):
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     async with session_factory() as db:
-        # Cleanup old market orders
         result = await db.execute(delete(MarketOrder).where(MarketOrder.fetched_at < cutoff))
         orders_deleted = result.rowcount
 
-        # Cleanup expired trade opportunities
         result = await db.execute(
             delete(TradeOpportunity).where(TradeOpportunity.status == "expired")
         )
@@ -161,6 +260,11 @@ async def _async_cleanup(session_factory):
 
         await db.commit()
     return f"清理完成: 删除 {orders_deleted} 条过期订单, {opps_deleted} 条过期机会"
+
+
+# ============================================================
+# Detect opportunities (adapted for multi-region)
+# ============================================================
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=60)
@@ -194,16 +298,13 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
     from sqlalchemy import select, func
     from app.models.market import MarketOrder
     from app.models.trade import TradeOpportunity
-    from app.config import settings
 
-    # Use config values with fallback to parameters
     min_buy_price = settings.scan_min_buy_price
     min_sell_price = settings.scan_min_sell_price
     min_volume = settings.scan_min_volume
     max_opportunities = settings.scan_max_opportunities
 
     async with session_factory() as db:
-        # 兜底：超过 30 分钟的 pending_analysis 升级为 active
         await db.execute(
             update(TradeOpportunity)
             .where(
@@ -214,7 +315,6 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         )
         await db.commit()
 
-        # Find items with both buy and sell orders
         subq = (
             select(
                 MarketOrder.type_id,
@@ -241,16 +341,14 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             select(subq).where(
                 subq.c.min_sell.isnot(None),
                 subq.c.max_buy.isnot(None),
-                subq.c.max_buy > subq.c.min_sell,  # 套利条件：最高买单 > 最低卖单
+                subq.c.max_buy > subq.c.min_sell,
             )
         )
         rows = result.fetchall()
 
-        # Get station IDs for best buy/sell orders
         station_cache = {}
         for row in rows:
             type_id = row[0]
-            # Get station for highest buy order
             buy_station = await db.execute(
                 select(MarketOrder.station_id)
                 .where(
@@ -262,8 +360,6 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 .limit(1)
             )
             buy_station_id = buy_station.scalar()
-
-            # Get station for lowest sell order
             sell_station = await db.execute(
                 select(MarketOrder.station_id)
                 .where(
@@ -275,10 +371,9 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 .limit(1)
             )
             sell_station_id = sell_station.scalar()
-
             station_cache[type_id] = (buy_station_id, sell_station_id)
 
-        # Get tax rates from character skills via ESI
+        # Tax rates
         from app.tools.cost_calculator import (
             calculate_sales_tax,
             calculate_broker_fee,
@@ -288,44 +383,32 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         from app.models.eve_character import EveCharacter
         from app.services.encryption import decrypt_token
 
-        # Try to get character-specific tax rates
-        sales_tax_pct = calculate_sales_tax(5)  # Default: 1.8%
-        broker_fee_pct = calculate_broker_fee(5)  # Default: 1.5%
+        sales_tax_pct = calculate_sales_tax(5)
+        broker_fee_pct = calculate_broker_fee(5)
 
         try:
-            # Get first character with valid token
             char_result = await db.execute(
                 select(EveCharacter)
                 .where(EveCharacter.token_expires_at > datetime.now(timezone.utc))
                 .limit(1)
             )
             character = char_result.scalar_one_or_none()
-
             if character:
                 access_token = decrypt_token(character.access_token)
                 if access_token:
-                    # Fetch skills from ESI (standings may fail due to scope)
                     skills_data = await esi_client.get_character_skills(
                         character.character_id, access_token
                     )
-
-                    # Try to get standings, but don't fail if unauthorized
                     standings_data = None
                     try:
                         standings_data = await esi_client.get_character_standings(
                             character.character_id, access_token
                         )
                     except Exception:
-                        pass  # Standings not available, use skills only
-
-                    # Calculate actual tax rates
+                        pass
                     tax_rates = calculate_tax_rates_from_skills(skills_data, standings_data)
                     sales_tax_pct = tax_rates["sales_tax_pct"]
                     broker_fee_pct = tax_rates["broker_fee_pct"]
-
-                    print(
-                        f"[税率] 使用角色 {character.character_name} 的实际税率: 销售税={sales_tax_pct}%, 中介费={broker_fee_pct}%"
-                    )
         except Exception as e:
             print(f"[税率] 获取角色技能失败，使用默认税率: {e}")
 
@@ -334,42 +417,25 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             type_id, min_sell, max_buy, buy_volume, sell_volume = row
             if min_sell <= 0 or max_buy <= 0:
                 continue
-
-            # min_sell = 最低卖单 (我们买入价)
-            # max_buy = 最高买单 (我们卖出价)
-
-            # Price filters
-            if min_sell < min_buy_price:
+            if min_sell < min_buy_price or max_buy < min_sell_price:
                 continue
-            if max_buy < min_sell_price:
-                continue
-
-            # Volume filter
             total_volume = int((buy_volume or 0) + (sell_volume or 0))
             if total_volume < min_volume:
                 continue
 
-            # Calculate raw spread
             raw_spread_pct = ((max_buy - min_sell) / min_sell) * 100
-
-            # Calculate net profit after taxes
-            # Buy cost: buy_price + broker_fee on buy
-            # Sell revenue: sell_price - sales_tax on sell
             buy_cost = min_sell * (1 + broker_fee_pct / 100)
             sell_revenue = max_buy * (1 - sales_tax_pct / 100)
             net_profit_pct = ((sell_revenue - buy_cost) / buy_cost) * 100
-
             if net_profit_pct < min_profit_pct:
                 continue
 
-            # Get station IDs from cache
             buy_station_id, sell_station_id = station_cache.get(type_id, (None, None))
-
             candidates.append(
                 {
                     "type_id": type_id,
-                    "buy_price": min_sell,  # 买入价 = 最低卖单
-                    "sell_price": max_buy,  # 卖出价 = 最高买单
+                    "buy_price": min_sell,
+                    "sell_price": max_buy,
                     "buy_station_id": buy_station_id,
                     "sell_station_id": sell_station_id,
                     "raw_spread_pct": round(raw_spread_pct, 2),
@@ -383,15 +449,12 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         if not candidates:
             return "未发现套利机会"
 
-        # Sort by profit and take top N
         candidates.sort(key=lambda x: -x["net_profit_pct"])
         candidates = candidates[:max_opportunities]
 
-        # Run ScannerAgent
         from app.agents.scanner import ScannerAgent
         from app.agents.base import AgentContext
 
-        # Load API key from database
         settings_result = await db.execute(select(UserSettings).limit(1))
         user_settings = settings_result.scalar_one_or_none()
 
@@ -404,14 +467,13 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         )
         scan_result = await agent.run(context, {"candidates": candidates})
 
-        # Expire old active opportunities before saving new ones
+        # Expire old active opportunities for this region
         await db.execute(
             update(TradeOpportunity)
             .where(TradeOpportunity.status == "active")
             .values(status="expired")
         )
 
-        # Save new opportunities
         saved = 0
         saved_opportunities = []
         for c in scan_result.get("candidates", []):
@@ -419,20 +481,18 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             if flag == "red":
                 continue
 
-            # Calculate estimated profit amount (per unit)
             buy_price = c.get("buy_price", 0)
             sell_price = c.get("sell_price", 0)
             sales_tax_pct = c.get("sales_tax_pct", 1.8)
             broker_fee_pct = c.get("broker_fee_pct", 1.5)
             volume = c.get("daily_volume", 0)
 
-            # Calculate detailed cost breakdown
             buy_cost_per_unit = buy_price * (1 + broker_fee_pct / 100)
             sell_revenue_per_unit = sell_price * (1 - sales_tax_pct / 100)
             broker_fee = buy_price * (broker_fee_pct / 100)
             sales_tax = sell_price * (sales_tax_pct / 100)
-            estimated_shipping = 50000  # Default shipping estimate
-            capital_cost = buy_price * 0.0002 * 3  # 0.02% daily for 3 days
+            estimated_shipping = 50000
+            capital_cost = buy_price * 0.0002 * 3
             total_costs = broker_fee + sales_tax + estimated_shipping + capital_cost
             net_profit = (
                 sell_revenue_per_unit - buy_cost_per_unit - estimated_shipping - capital_cost
@@ -452,10 +512,7 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 risk_level=flag,
                 volume_confidence=min(volume / 100, 1.0),
                 agent_analysis=json_module.dumps(
-                    {
-                        "mode": "quick_scan",
-                        "trend_analysis": c.get("llm_notes", ""),
-                    },
+                    {"mode": "quick_scan", "trend_analysis": c.get("llm_notes", "")},
                     ensure_ascii=False,
                 ),
                 cost_breakdown={
@@ -478,11 +535,10 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 status="pending_analysis" if flag == "green" else "active",
             )
             db.add(opp)
-            await db.flush()  # 确保 UUID 生成
+            await db.flush()
             saved_opportunities.append(opp)
             saved += 1
 
-        # 对 top 3 green 机会触发深度分析
         green_opportunities = [o for o in saved_opportunities if o.status == "pending_analysis"]
         green_opportunities.sort(key=lambda o: -(o.recommendation_score or 0))
         for opp in green_opportunities[:3]:
@@ -490,12 +546,10 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 from app.tasks.deep_analysis import deep_analysis
 
                 deep_analysis.delay(str(opp.id))
-                print(f"[DeepAnalysis] 触发深度分析: {opp.type_id}")
             except Exception as e:
                 print(f"[DeepAnalysis] 触发失败: {e}")
                 opp.status = "active"
 
         await db.commit()
-
         summary = scan_result.get("summary", {})
         return f"发现{len(candidates)}个候选, 保存{saved}个机会 (绿{summary.get('green', 0)}/黄{summary.get('yellow', 0)}/红{summary.get('red', 0)})"
