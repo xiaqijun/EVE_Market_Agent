@@ -101,7 +101,7 @@ async def _run_deep_analysis(opportunity_id: str):
             })
 
             # 5. 更新 DB
-            opp.status = "active"
+            opp.status = "analyzed"
             opp.agent_analysis = json.dumps(analysis_result, ensure_ascii=False)
             opp.analysis_model = "claude-sonnet"
             opp.analysis_completed_at = datetime.now(timezone.utc)
@@ -114,7 +114,7 @@ async def _run_deep_analysis(opportunity_id: str):
                     "type": "opportunity.updated",
                     "data": {
                         "id": str(opp.id),
-                        "status": "active",
+                        "status": "analyzed",
                         "mode": "full_analysis",
                     }
                 })
