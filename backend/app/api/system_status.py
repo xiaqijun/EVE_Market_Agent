@@ -233,7 +233,12 @@ async def agent_logs(
 
 @router.get("/esi-rate-stats")
 async def esi_rate_stats(user_id: str = Depends(get_current_user)):
-    """Get ESI rate limiter statistics."""
+    """Get ESI rate limiter statistics (from Redis, populated by worker)."""
+    from app.tools.rate_limiter import EsiRateManager
+    data = EsiRateManager.load_from_redis()
+    if data:
+        return data
+    # Fallback to in-memory (same process)
     from app.tools.esi_client import esi_client
     return esi_client.rate_stats
 

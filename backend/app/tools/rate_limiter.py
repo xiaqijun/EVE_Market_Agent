@@ -9,6 +9,7 @@ Implements ESI's floating-window token bucket model with:
 """
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from app.config import settings
@@ -173,6 +174,9 @@ class EsiRateManager:
         if error_reset is not None:
             self._error_reset_at = time.time() + int(error_reset)
 
+        # Persist to Redis for cross-process access
+        self.save_to_redis()
+
     def update_cache(self, path: str, params_key: str, headers: dict) -> None:
         """Update cache state from ESI response headers."""
         cache_key = f"{path}?{params_key}"
@@ -263,6 +267,47 @@ class EsiRateManager:
     def status(self) -> dict:
         """Alias for stats, backward compatible."""
         return self.stats
+
+    def save_to_redis(self) -> None:
+        """Persist current stats to Redis for cross-process access."""
+        try:
+            import redis
+            r = redis.from_url(settings.redis_url)
+            data = {
+                "total_requests": self._stats.total_requests,
+                "total_wait_seconds": round(self._stats.total_wait_seconds, 1),
+                "total_429_hits": self._stats.total_429_hits,
+                "total_304_hits": self._stats.total_304_hits,
+                "total_errors": self._stats.total_errors,
+                "requests_by_group": dict(self._stats.requests_by_group),
+                "cache_entries": len(self._cache),
+                "buckets": {
+                    name: {
+                        "remaining": b.remaining,
+                        "limit": b.limit,
+                        "usage_pct": round((1 - b.usage_ratio) * 100, 1),
+                        "penalty_count": b.penalty_count,
+                    }
+                    for name, b in self._buckets.items()
+                },
+                "updated_at": time.time(),
+            }
+            r.set("esi:rate_stats", json.dumps(data), ex=300)
+        except Exception:
+            pass
+
+    @staticmethod
+    def load_from_redis() -> dict | None:
+        """Load stats from Redis (for API access from different process)."""
+        try:
+            import redis
+            r = redis.from_url(settings.redis_url)
+            data = r.get("esi:rate_stats")
+            if data:
+                return json.loads(data)
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def _parse_limit(limit_str: str) -> tuple[int, int]:
