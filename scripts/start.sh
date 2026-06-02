@@ -19,6 +19,13 @@ for arg in "$@"; do
     esac
 done
 
+# Build frontend if dist is missing or stale
+FRONTEND_DIST="$PROJECT_DIR/frontend/dist/index.html"
+if [ ! -f "$FRONTEND_DIST" ] || [ "$PROJECT_DIR/frontend/src" -nt "$FRONTEND_DIST" ]; then
+    echo "Frontend needs rebuild..."
+    bash "$PROJECT_DIR/scripts/build-frontend.sh"
+fi
+
 # Cleanup on exit
 cleanup() {
     echo ""
