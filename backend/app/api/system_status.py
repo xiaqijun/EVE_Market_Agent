@@ -231,6 +231,13 @@ async def agent_logs(
     }
 
 
+@router.get("/esi-rate-stats")
+async def esi_rate_stats(user_id: str = Depends(get_current_user)):
+    """Get ESI rate limiter statistics."""
+    from app.tools.esi_client import esi_client
+    return esi_client.rate_stats
+
+
 def _minutes_ago(dt) -> float | None:
     if not dt:
         return None

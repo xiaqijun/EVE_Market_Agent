@@ -1,6 +1,6 @@
 import { useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts"
+import { useQuery } from "@tanstack/react-query"
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts"
 import { useAuthStore } from "../stores/authStore"
 
 const API = "/api/v1"
@@ -19,7 +19,7 @@ function fmt(n: number): string {
 }
 
 function timeAgo(iso: string | null): string {
-  if (!iso) return "从未执行"
+  if (!iso) return "无数据"
   const diff = Date.now() - new Date(iso).getTime()
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return "刚刚"
@@ -30,22 +30,28 @@ function timeAgo(iso: string | null): string {
   return `${days} 天前`
 }
 
+function healthColor(minutes: number | null, warn: number, danger: number): string {
+  if (minutes == null) return "text-gray-500"
+  if (minutes < warn) return "text-eve-profit"
+  if (minutes < danger) return "text-eve-warning"
+  return "text-eve-danger"
+}
+
+function healthDot(minutes: number | null, warn: number, danger: number): string {
+  if (minutes == null) return "bg-gray-600"
+  if (minutes < warn) return "bg-eve-profit"
+  if (minutes < danger) return "bg-eve-warning"
+  return "bg-eve-danger"
+}
+
 export default function SystemStatusPage() {
   const token = useAuthStore(s => s.token)
-  const queryClient = useQueryClient()
   const [logFilter, setLogFilter] = useState<string>("all")
-  const [runningTask, setRunningTask] = useState<string | null>(null)
 
   const { data: status, refetch: refetchStatus } = useQuery({
     queryKey: ["system-status"],
     queryFn: () => fetchJSON(`${API}/system/status`, token!),
     enabled: !!token, refetchInterval: 30000,
-  })
-
-  const { data: tasks } = useQuery({
-    queryKey: ["system-tasks"],
-    queryFn: () => fetchJSON(`${API}/system/tasks`, token!),
-    enabled: !!token, refetchInterval: 15000,
   })
 
   const { data: tokenUsage } = useQuery({
@@ -62,64 +68,140 @@ export default function SystemStatusPage() {
 
   const { data: agentLogs } = useQuery({
     queryKey: ["agent-logs"],
-    queryFn: () => fetchJSON(`${API}/system/agent-logs?limit=20`, token!),
+    queryFn: () => fetchJSON(`${API}/system/agent-logs?limit=30`, token!),
     enabled: !!token, refetchInterval: 15000,
   })
 
-  const { data: taskLogs } = useQuery({
-    queryKey: ["task-logs"],
-    queryFn: () => fetchJSON(`${API}/system/task-logs?limit=20`, token!),
-    enabled: !!token, refetchInterval: 15000,
+  const { data: esiStats } = useQuery({
+    queryKey: ["esi-rate-stats"],
+    queryFn: () => fetchJSON(`${API}/system/esi-rate-stats`, token!),
+    enabled: !!token, refetchInterval: 10000,
   })
 
-  const filteredAgentLogs = logFilter === "all" ? agentLogs?.items : agentLogs?.items?.filter((l: any) => l.status === logFilter)
-  const filteredTaskLogs = logFilter === "all" ? taskLogs?.items : taskLogs?.items?.filter((l: any) => l.status === logFilter)
+  const filteredLogs = logFilter === "all"
+    ? agentLogs?.items
+    : agentLogs?.items?.filter((l: any) => l.status === logFilter)
 
-  const triggerTask = async (taskName: string) => {
-    if (!token || runningTask) return
-    setRunningTask(taskName)
-    try {
-      const res = await fetch(`${API}/system/tasks/${taskName}/run`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
-      const data = await res.json()
-      if (res.ok) {
-        setTimeout(() => queryClient.invalidateQueries({ queryKey: ["task-logs"] }), 3000)
-      }
-    } catch {}
-    setRunningTask(null)
-  }
+  const overallOk = status
+    && status.market.freshness_minutes < 120
+    && status.history.freshness_hours < 48
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-lg font-semibold tracking-wider">系统监控</h1>
-          <p className="text-xs text-gray-500 mt-1">Token 用量 · Agent 日志 · 任务执行 · 数据新鲜度</p>
+          <p className="text-xs text-gray-500 mt-1">Token 用量 · Agent 日志 · 数据新鲜度</p>
         </div>
-        <button onClick={() => refetchStatus()} className="px-4 py-2 bg-white/5 border border-white/10 text-gray-400 font-display text-xs rounded-lg tracking-wider hover:bg-white/10 transition-colors">↻ 刷新</button>
+        <div className="flex items-center gap-3">
+          {status && (
+            <span className={`flex items-center gap-1.5 text-xs ${overallOk ? "text-eve-profit" : "text-eve-danger"}`}>
+              <span className={`w-2 h-2 rounded-full ${overallOk ? "bg-eve-profit" : "bg-eve-danger"}`} />
+              {overallOk ? "系统正常" : "需要关注"}
+            </span>
+          )}
+          <button onClick={() => refetchStatus()}
+            className="px-4 py-2 bg-white/5 border border-white/10 text-gray-400 font-display text-xs rounded-lg tracking-wider hover:bg-white/10 transition-colors">
+            ↻ 刷新
+          </button>
+        </div>
       </div>
 
-      {/* Token Usage Summary */}
-      {tokenUsage && (
-        <div className="grid grid-cols-5 gap-4">
-          <StatCard label="今日 Token" value={fmt(tokenUsage.today?.tokens ?? 0)} color="text-eve-cyan" />
-          <StatCard label="今日调用" value={String(tokenUsage.today?.calls ?? 0)} color="text-eve-gold" />
-          <StatCard label="今日费用" value={`$${(tokenUsage.today?.cost_usd ?? 0).toFixed(3)}`} color="text-eve-warning" />
-          <StatCard label="总调用" value={String(tokenUsage.total?.calls ?? 0)} color="text-eve-gold" />
-          <StatCard label="总费用" value={`$${(tokenUsage.total?.cost_usd ?? 0).toFixed(2)}`} color="text-eve-profit" />
+      {/* Data Freshness */}
+      {status && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <FreshnessCard
+            title="市场订单"
+            count={status.market.orders_count}
+            detail={`${status.market.orders_types} 种物品`}
+            freshness={status.market.freshness_minutes}
+            unit="分钟"
+            warnThreshold={60}
+            dangerThreshold={120}
+          />
+          <FreshnessCard
+            title="历史价格"
+            count={status.history.records_count}
+            detail={`${status.history.items_tracked} 种物品`}
+            freshness={status.history.freshness_hours}
+            unit="小时"
+            warnThreshold={24}
+            dangerThreshold={48}
+          />
+          <FreshnessCard
+            title="SDE 数据"
+            count={status.sde.items}
+            detail={`${status.sde.regions} 个区域`}
+            freshness={null}
+            unit=""
+            warnThreshold={0}
+            dangerThreshold={0}
+          />
+          <FreshnessCard
+            title="RAG 知识库"
+            count={status.rag.documents}
+            detail={`${status.rag.embedded} 已向量化`}
+            freshness={null}
+            unit=""
+            warnThreshold={0}
+            dangerThreshold={0}
+          />
+        </div>
+      )}
+
+      {/* Character & Trading Summary */}
+      {status && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-eve-card border border-white/5 rounded-xl p-4 backdrop-blur-sm">
+            <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">绑定角色</div>
+            <div className="font-display text-lg font-bold text-eve-cyan">{status.characters.length}</div>
+            {status.characters.map((c: any) => (
+              <div key={c.character_id} className="text-[11px] text-gray-400 mt-1 flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${c.token_valid ? "bg-eve-profit" : "bg-eve-danger"}`} />
+                {c.name}
+              </div>
+            ))}
+          </div>
+          <div className="bg-eve-card border border-white/5 rounded-xl p-4 backdrop-blur-sm">
+            <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">交易记录</div>
+            <div className="font-display text-lg font-bold text-eve-gold">{status.user.trades_count}</div>
+            <div className="text-[11px] text-gray-400 mt-1">
+              {status.user.last_trade ? timeAgo(status.user.last_trade) : "暂无交易"}
+            </div>
+          </div>
+          {tokenUsage && (
+            <>
+              <div className="bg-eve-card border border-white/5 rounded-xl p-4 backdrop-blur-sm">
+                <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">今日 Token</div>
+                <div className="font-display text-lg font-bold text-eve-cyan">{fmt(tokenUsage.today?.tokens ?? 0)}</div>
+                <div className="text-[11px] text-gray-400 mt-1">{tokenUsage.today?.calls ?? 0} 次调用</div>
+              </div>
+              <div className="bg-eve-card border border-white/5 rounded-xl p-4 backdrop-blur-sm">
+                <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">累计费用</div>
+                <div className="font-display text-lg font-bold text-eve-warning">${(tokenUsage.total?.cost_usd ?? 0).toFixed(2)}</div>
+                <div className="text-[11px] text-gray-400 mt-1">今日 ${(tokenUsage.today?.cost_usd ?? 0).toFixed(3)}</div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* Token Charts */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {dailyUsage?.days && dailyUsage.days.length > 0 && (
           <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
             <h3 className="font-display text-[13px] font-semibold tracking-wider mb-3">Token 用量趋势（14天）</h3>
-            <ResponsiveContainer width="100%" height={180}>
+            <ResponsiveContainer width="100%" height={200}>
               <BarChart data={dailyUsage.days}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#888' }} tickFormatter={(v: string) => v.slice(5)} />
-                <YAxis tick={{ fontSize: 10, fill: '#888' }} tickFormatter={(v: number) => fmt(v)} />
-                <Tooltip contentStyle={{ background: '#0a1628', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} formatter={(v: number) => [fmt(v), 'tokens']} labelFormatter={(v: string) => `日期: ${v}`} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#666' }} tickFormatter={(v: string) => v.slice(5)} />
+                <YAxis tick={{ fontSize: 10, fill: '#666' }} tickFormatter={(v: number) => fmt(v)} />
+                <Tooltip
+                  contentStyle={{ background: '#0a1628', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }}
+                  formatter={(v: number) => [fmt(v), 'tokens']}
+                  labelFormatter={(v: string) => `日期: ${v}`}
+                />
                 <Bar dataKey="tokens" fill="rgba(0,180,216,0.6)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -127,13 +209,16 @@ export default function SystemStatusPage() {
         )}
         {tokenUsage?.by_agent?.length > 0 && (
           <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
-            <h3 className="font-display text-[13px] font-semibold tracking-wider mb-3">按 Agent 分解（本月）</h3>
-            <ResponsiveContainer width="100%" height={180}>
+            <h3 className="font-display text-[13px] font-semibold tracking-wider mb-3">按 Agent 分解</h3>
+            <ResponsiveContainer width="100%" height={200}>
               <BarChart data={tokenUsage.by_agent} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis type="number" tick={{ fontSize: 10, fill: '#888' }} tickFormatter={(v: number) => fmt(v)} />
-                <YAxis type="category" dataKey="agent" tick={{ fontSize: 10, fill: '#888' }} width={100} />
-                <Tooltip contentStyle={{ background: '#0a1628', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} formatter={(v: number) => [fmt(v), 'tokens']} />
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#666' }} tickFormatter={(v: number) => fmt(v)} />
+                <YAxis type="category" dataKey="agent" tick={{ fontSize: 10, fill: '#666' }} width={80} />
+                <Tooltip
+                  contentStyle={{ background: '#0a1628', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }}
+                  formatter={(v: number) => [fmt(v), 'tokens']}
+                />
                 <Bar dataKey="tokens" fill="rgba(201,168,76,0.6)" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -141,129 +226,170 @@ export default function SystemStatusPage() {
         )}
       </div>
 
-      {/* Data Freshness */}
-      {status && (
-        <div className="grid grid-cols-2 gap-4">
-          <FreshnessCard title="市场订单" count={status.market.orders_count} detail={`${status.market.orders_types} 种物品`} freshness={status.market.freshness_minutes} unit="分钟" ok={status.market.freshness_minutes < 120} />
-          <FreshnessCard title="历史价格" count={status.history.records_count} detail={`${status.history.items_tracked} 种物品`} freshness={status.history.freshness_hours} unit="小时" ok={status.history.freshness_hours < 48} />
-        </div>
-      )}
-
-      {/* Task Management */}
-      {tasks?.beat_schedule && (
+      {/* ESI Rate Limit Monitor */}
+      {esiStats && (
         <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
-          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">定时任务管理</h3>
-          <div className="space-y-3">
-            {Object.entries(tasks.beat_schedule).map(([key, val]: [string, any]) => (
-              <div key={key} className="flex items-center justify-between py-3 border-b border-white/5 hover:bg-white/[0.02] px-2 rounded transition-colors">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{val.description}</span>
-                    <span className="text-[10px] text-gray-500 bg-white/5 px-2 py-0.5 rounded">{val.interval}</span>
-                  </div>
-                  <div className="text-[11px] text-gray-500 mt-1">
-                    {val.last_run ? (
-                      <>
-                        <span className={val.last_run.status === "success" ? "text-eve-profit" : "text-eve-danger"}>
-                          {val.last_run.status === "success" ? "✓" : "✗"} {val.last_run.status}
-                        </span>
-                        <span className="mx-1">·</span>
-                        {val.last_run.duration_ms ? `${(val.last_run.duration_ms / 1000).toFixed(1)}s` : "—"}
-                        <span className="mx-1">·</span>
-                        {timeAgo(val.last_run.time)}
-                        {val.last_run.result && <span className="ml-1 text-gray-400">— {val.last_run.result}</span>}
-                        {val.last_run.error && <span className="ml-1 text-eve-danger">— {val.last_run.error.slice(0, 80)}</span>}
-                      </>
-                    ) : (
-                      <span className="text-gray-600">尚未执行</span>
-                    )}
-                  </div>
-                </div>
-                <button onClick={() => triggerTask(key)} disabled={runningTask === key}
-                  className="px-3 py-1.5 bg-white/5 border border-white/10 text-gray-400 text-xs rounded hover:bg-white/10 transition-colors disabled:opacity-50 flex-shrink-0 ml-4">
-                  {runningTask === key ? "执行中..." : "▶ 立即执行"}
-                </button>
+          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-4">ESI 速率控制</h3>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+            <div>
+              <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">总请求</div>
+              <div className="font-display text-lg font-bold text-eve-cyan">{fmt(esiStats.total_requests)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">累计等待</div>
+              <div className="font-display text-lg font-bold text-eve-warning">{esiStats.total_wait_seconds}s</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">429 惩罚</div>
+              <div className={`font-display text-lg font-bold ${esiStats.total_429_hits > 0 ? "text-eve-danger" : "text-eve-profit"}`}>
+                {esiStats.total_429_hits}
               </div>
-            ))}
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">304 命中</div>
+              <div className="font-display text-lg font-bold text-eve-profit">{fmt(esiStats.total_304_hits)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">缓存条目</div>
+              <div className="font-display text-lg font-bold text-gray-400">{esiStats.cache_entries}</div>
+            </div>
           </div>
+          {Object.keys(esiStats.buckets).length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] text-gray-500 uppercase tracking-wider border-b border-white/5">
+                    <th className="text-left py-2 font-normal">路由组</th>
+                    <th className="text-right py-2 font-normal">剩余</th>
+                    <th className="text-right py-2 font-normal">总量</th>
+                    <th className="text-right py-2 font-normal">使用率</th>
+                    <th className="text-center py-2 font-normal">状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(esiStats.buckets).map(([name, bucket]: [string, any]) => (
+                    <tr key={name} className="border-b border-white/[0.03]">
+                      <td className="py-2 font-mono text-eve-cyan text-xs">{name}</td>
+                      <td className="py-2 text-right font-mono text-xs text-gray-300">{bucket.remaining?.toLocaleString()}</td>
+                      <td className="py-2 text-right font-mono text-xs text-gray-500">{bucket.limit?.toLocaleString()}</td>
+                      <td className="py-2 text-right text-xs">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${bucket.usage_pct > 50 ? "bg-eve-profit" : bucket.usage_pct > 20 ? "bg-eve-warning" : "bg-eve-danger"}`}
+                              style={{ width: `${bucket.usage_pct}%` }}
+                            />
+                          </div>
+                          <span className="text-gray-400 w-10 text-right">{bucket.usage_pct}%</span>
+                        </div>
+                      </td>
+                      <td className="py-2 text-center">
+                        {bucket.penalty_count > 0 ? (
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-eve-danger/15 text-eve-danger">惩罚 x{bucket.penalty_count}</span>
+                        ) : (
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-eve-profit/15 text-eve-profit">正常</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
-
-      {/* Log Filter */}
-      <div className="flex gap-2">
-        {["all", "success", "error", "pending"].map(f => (
-          <button key={f} onClick={() => setLogFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-display tracking-wider transition-colors ${
-              logFilter === f ? "bg-eve-gold text-black" : "bg-white/5 border border-white/10 text-gray-400 hover:border-white/20"
-            }`}>
-            {f === "all" ? "全部" : f === "success" ? "成功" : f === "error" ? "失败" : "进行中"}
-          </button>
-        ))}
-      </div>
 
       {/* Agent Logs */}
-      {filteredAgentLogs && filteredAgentLogs.length > 0 && (
-        <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
-          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-3">Agent 执行日志</h3>
-          <div className="space-y-1">
-            {filteredAgentLogs.map((l: any) => (
-              <div key={l.id} className="flex items-center justify-between py-1.5 border-b border-white/5 text-sm hover:bg-white/[0.02]">
-                <span className="text-gray-400 text-xs w-20">{l.time ? new Date(l.time).toLocaleTimeString("zh-CN") : "—"}</span>
-                <span className="font-mono text-eve-cyan w-28 truncate">{l.agent}</span>
-                <span className="text-gray-300 flex-1 truncate px-2">{l.input || l.action}</span>
-                <span className={`w-14 text-right text-xs ${l.status === "success" ? "text-eve-profit" : l.status === "error" ? "text-eve-danger" : "text-eve-warning"}`}>{l.status}</span>
-                <span className="font-mono text-xs text-gray-500 w-14 text-right">{l.latency_ms}ms</span>
-              </div>
+      <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-display text-[13px] font-semibold tracking-wider">Agent 执行日志</h3>
+          <div className="flex gap-2">
+            {["all", "success", "error"].map(f => (
+              <button key={f} onClick={() => setLogFilter(f)}
+                className={`px-3 py-1 rounded text-[11px] font-display tracking-wider transition-colors ${
+                  logFilter === f
+                    ? "bg-eve-gold text-black"
+                    : "bg-white/5 border border-white/10 text-gray-400 hover:border-white/20"
+                }`}>
+                {f === "all" ? "全部" : f === "success" ? "成功" : "失败"}
+              </button>
             ))}
           </div>
         </div>
-      )}
 
-      {/* Task Logs */}
-      {filteredTaskLogs && filteredTaskLogs.length > 0 && (
-        <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
-          <h3 className="font-display text-[13px] font-semibold tracking-wider mb-3">任务执行日志</h3>
-          <div className="space-y-1">
-            {filteredTaskLogs.map((l: any) => (
-              <div key={l.id} className="flex items-center justify-between py-1.5 border-b border-white/5 text-sm hover:bg-white/[0.02]">
-                <span className="text-gray-400 text-xs w-20">{l.time ? new Date(l.time).toLocaleTimeString("zh-CN") : "—"}</span>
-                <span className="text-gray-300 flex-1 truncate">{l.task}</span>
-                <span className={`w-14 text-right text-xs ${l.status === "success" ? "text-eve-profit" : l.status === "failed" ? "text-eve-danger" : "text-eve-warning"}`}>{l.status}</span>
-                <span className="font-mono text-xs text-gray-500 w-14 text-right">{l.duration_ms}ms</span>
-              </div>
-            ))}
+        {filteredLogs && filteredLogs.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] text-gray-500 uppercase tracking-wider border-b border-white/5">
+                  <th className="text-left py-2 font-normal">时间</th>
+                  <th className="text-left py-2 font-normal">Agent</th>
+                  <th className="text-left py-2 font-normal">操作</th>
+                  <th className="text-center py-2 font-normal">状态</th>
+                  <th className="text-right py-2 font-normal">耗时</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLogs.map((l: any) => (
+                  <tr key={l.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                    <td className="py-2 text-gray-400 text-xs whitespace-nowrap">
+                      {l.time ? new Date(l.time).toLocaleTimeString("zh-CN") : "—"}
+                    </td>
+                    <td className="py-2 font-mono text-eve-cyan text-xs">{l.agent}</td>
+                    <td className="py-2 text-gray-300 text-xs max-w-[300px] truncate">{l.input || l.action}</td>
+                    <td className="py-2 text-center">
+                      <StatusBadge status={l.status} />
+                    </td>
+                    <td className="py-2 text-right font-mono text-xs text-gray-500">{l.latency_ms}ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="text-center text-gray-500 text-sm py-8">暂无日志</div>
+        )}
+      </div>
     </div>
   )
 }
 
-function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
+function StatusBadge({ status }: { status: string }) {
+  const colors = {
+    success: "bg-eve-profit/15 text-eve-profit",
+    error: "bg-eve-danger/15 text-eve-danger",
+    pending: "bg-eve-warning/15 text-eve-warning",
+  }
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-[11px] ${colors[status as keyof typeof colors] || "bg-white/5 text-gray-400"}`}>
+      {status}
+    </span>
+  )
+}
+
+function FreshnessCard({ title, count, detail, freshness, unit, warnThreshold, dangerThreshold }: {
+  title: string; count: number; detail: string; freshness: number | null; unit: string
+  warnThreshold: number; dangerThreshold: number
+}) {
+  const showHealth = freshness != null && dangerThreshold > 0
+  const color = showHealth ? healthColor(freshness, warnThreshold, dangerThreshold) : "text-eve-cyan"
+  const dot = showHealth ? healthDot(freshness, warnThreshold, dangerThreshold) : "bg-gray-600"
+
   return (
     <div className="bg-eve-card border border-white/5 rounded-xl p-4 backdrop-blur-sm">
-      <div className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display mb-1">{label}</div>
-      <div className={`font-display text-lg font-bold ${color}`}>{value}</div>
-    </div>
-  )
-}
-
-function FreshnessCard({ title, count, detail, freshness, unit, ok }: {
-  title: string; count: number; detail: string; freshness: number | null; unit: string; ok: boolean
-}) {
-  return (
-    <div className="bg-eve-card border border-white/5 rounded-xl p-5 backdrop-blur-sm">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] text-gray-500 tracking-[0.08em] uppercase font-display">{title}</span>
-        <span className={`w-2 h-2 rounded-full ${ok ? 'bg-eve-profit' : 'bg-eve-danger'}`} />
+        <span className="text-[10px] text-gray-500 tracking-[0.08em] uppercase font-display">{title}</span>
+        <span className={`w-2 h-2 rounded-full ${dot}`} />
       </div>
-      <div className={`font-display text-2xl font-bold ${ok ? 'text-eve-cyan' : 'text-eve-danger'}`}>
+      <div className={`font-display text-xl font-bold ${color}`}>
         {count.toLocaleString()}
       </div>
-      <div className="text-xs text-gray-500 mt-1">{detail}</div>
-      <div className={`text-[11px] mt-1 ${ok ? 'text-gray-500' : 'text-eve-danger'}`}>
-        {freshness != null ? `${freshness} ${unit} 前` : "暂无数据"}
-      </div>
+      <div className="text-[11px] text-gray-500 mt-0.5">{detail}</div>
+      {showHealth && (
+        <div className={`text-[11px] mt-1 ${color}`}>
+          {freshness} {unit} 前
+        </div>
+      )}
     </div>
   )
 }
