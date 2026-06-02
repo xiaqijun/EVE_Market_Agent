@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     market_high_freq_types: int = 50  # Top N types → every 1 min
     market_mid_freq_types: int = 300  # Top M types → every 10 min
 
+    # ESI rate limiting
+    esi_throttle_threshold: float = 0.10  # Throttle when remaining ≤ 10%
+    esi_penalty_multiplier: float = 2.0  # 429 penalty backoff multiplier
+    esi_max_penalty_wait: int = 120  # Max penalty wait seconds
+
     @property
     def database_url(self) -> str:
         return (
