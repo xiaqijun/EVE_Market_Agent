@@ -16,10 +16,13 @@ def scan_region_market(self, region_id: int, type_ids: list[int] | None = None):
         return f"跳过: {task_name} 正在执行中"
     try:
         from app.tasks.task_logger import set_task_context
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(_run_with_engine(_async_scan_region, region_id, type_ids))
+            result = loop.run_until_complete(
+                _run_with_engine(_async_scan_region, region_id, type_ids)
+            )
         finally:
             loop.close()
         set_task_context(
@@ -42,6 +45,8 @@ async def _run_with_engine(async_fn, *args):
 
 
 async def _async_scan_region(session_factory, region_id: int, type_ids: list[int] | None):
+    batch_time = datetime.now(timezone.utc)
+
     orders = []
     if type_ids:
         for tid in type_ids:
@@ -54,11 +59,20 @@ async def _async_scan_region(session_factory, region_id: int, type_ids: list[int
     sell_count = len(orders) - buy_count
 
     async with session_factory() as db:
-        await db.execute(delete(MarketOrder).where(MarketOrder.region_id == region_id))
+        # Incremental upsert: update existing, insert new
         await _store_orders(db, orders, region_id)
+        # Remove stale orders not seen in this batch (10 min grace window)
+        stale_cutoff = batch_time - timedelta(minutes=10)
+        result = await db.execute(
+            delete(MarketOrder).where(
+                MarketOrder.region_id == region_id,
+                MarketOrder.fetched_at < stale_cutoff,
+            )
+        )
+        stale_deleted = result.rowcount
         await db.commit()
 
-    return f"扫描完成: {len(orders)} 条订单, {unique_types} 种物品, {buy_count} 买单 / {sell_count} 卖单"
+    return f"扫描完成: {len(orders)} 条订单, {unique_types} 种物品, {buy_count} 买单 / {sell_count} 卖单, 清理 {stale_deleted} 条过期"
 
 
 def _parse_datetime(val):
@@ -104,7 +118,7 @@ async def _store_orders(db, orders: list, region_id: int = 0):
 
     # Batch upsert (asyncpg limit: 32767 params, 14 cols per row -> ~2000 rows max)
     for i in range(0, len(unique_rows), 2000):
-        batch = unique_rows[i:i+2000]
+        batch = unique_rows[i : i + 2000]
         stmt = pg_insert(MarketOrder.__table__).values(batch)
         update_cols = {c.name: c for c in stmt.excluded if c.name not in ("order_id",)}
         stmt = stmt.on_conflict_do_update(
@@ -132,12 +146,11 @@ def cleanup_old_orders():
 
 async def _async_cleanup(session_factory):
     from app.models.trade import TradeOpportunity
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     async with session_factory() as db:
         # Cleanup old market orders
-        result = await db.execute(
-            delete(MarketOrder).where(MarketOrder.fetched_at < cutoff)
-        )
+        result = await db.execute(delete(MarketOrder).where(MarketOrder.fetched_at < cutoff))
         orders_deleted = result.rowcount
 
         # Cleanup expired trade opportunities
@@ -158,6 +171,7 @@ def detect_opportunities(self, region_id: int = 10000002, min_profit_pct: float 
         return f"跳过: {task_name} 正在执行中"
     try:
         from app.tasks.task_logger import set_task_context
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -204,10 +218,18 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
         subq = (
             select(
                 MarketOrder.type_id,
-                func.min(MarketOrder.price).filter(MarketOrder.is_buy_order.is_(False)).label("min_sell"),
-                func.max(MarketOrder.price).filter(MarketOrder.is_buy_order.is_(True)).label("max_buy"),
-                func.sum(MarketOrder.volume_remain).filter(MarketOrder.is_buy_order.is_(True)).label("buy_volume"),
-                func.sum(MarketOrder.volume_remain).filter(MarketOrder.is_buy_order.is_(False)).label("sell_volume"),
+                func.min(MarketOrder.price)
+                .filter(MarketOrder.is_buy_order.is_(False))
+                .label("min_sell"),
+                func.max(MarketOrder.price)
+                .filter(MarketOrder.is_buy_order.is_(True))
+                .label("max_buy"),
+                func.sum(MarketOrder.volume_remain)
+                .filter(MarketOrder.is_buy_order.is_(True))
+                .label("buy_volume"),
+                func.sum(MarketOrder.volume_remain)
+                .filter(MarketOrder.is_buy_order.is_(False))
+                .label("sell_volume"),
             )
             .where(MarketOrder.region_id == region_id)
             .group_by(MarketOrder.type_id)
@@ -257,7 +279,11 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             station_cache[type_id] = (buy_station_id, sell_station_id)
 
         # Get tax rates from character skills via ESI
-        from app.tools.cost_calculator import calculate_sales_tax, calculate_broker_fee, calculate_tax_rates_from_skills
+        from app.tools.cost_calculator import (
+            calculate_sales_tax,
+            calculate_broker_fee,
+            calculate_tax_rates_from_skills,
+        )
         from app.models.rag import UserSettings
         from app.models.eve_character import EveCharacter
         from app.services.encryption import decrypt_token
@@ -279,12 +305,16 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 access_token = decrypt_token(character.access_token)
                 if access_token:
                     # Fetch skills from ESI (standings may fail due to scope)
-                    skills_data = await esi_client.get_character_skills(character.character_id, access_token)
+                    skills_data = await esi_client.get_character_skills(
+                        character.character_id, access_token
+                    )
 
                     # Try to get standings, but don't fail if unauthorized
                     standings_data = None
                     try:
-                        standings_data = await esi_client.get_character_standings(character.character_id, access_token)
+                        standings_data = await esi_client.get_character_standings(
+                            character.character_id, access_token
+                        )
                     except Exception:
                         pass  # Standings not available, use skills only
 
@@ -293,7 +323,9 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                     sales_tax_pct = tax_rates["sales_tax_pct"]
                     broker_fee_pct = tax_rates["broker_fee_pct"]
 
-                    print(f"[税率] 使用角色 {character.character_name} 的实际税率: 销售税={sales_tax_pct}%, 中介费={broker_fee_pct}%")
+                    print(
+                        f"[税率] 使用角色 {character.character_name} 的实际税率: 销售税={sales_tax_pct}%, 中介费={broker_fee_pct}%"
+                    )
         except Exception as e:
             print(f"[税率] 获取角色技能失败，使用默认税率: {e}")
 
@@ -333,18 +365,20 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             # Get station IDs from cache
             buy_station_id, sell_station_id = station_cache.get(type_id, (None, None))
 
-            candidates.append({
-                "type_id": type_id,
-                "buy_price": min_sell,    # 买入价 = 最低卖单
-                "sell_price": max_buy,    # 卖出价 = 最高买单
-                "buy_station_id": buy_station_id,
-                "sell_station_id": sell_station_id,
-                "raw_spread_pct": round(raw_spread_pct, 2),
-                "net_profit_pct": round(net_profit_pct, 2),
-                "sales_tax_pct": sales_tax_pct,
-                "broker_fee_pct": broker_fee_pct,
-                "daily_volume": total_volume,
-            })
+            candidates.append(
+                {
+                    "type_id": type_id,
+                    "buy_price": min_sell,  # 买入价 = 最低卖单
+                    "sell_price": max_buy,  # 卖出价 = 最高买单
+                    "buy_station_id": buy_station_id,
+                    "sell_station_id": sell_station_id,
+                    "raw_spread_pct": round(raw_spread_pct, 2),
+                    "net_profit_pct": round(net_profit_pct, 2),
+                    "sales_tax_pct": sales_tax_pct,
+                    "broker_fee_pct": broker_fee_pct,
+                    "daily_volume": total_volume,
+                }
+            )
 
         if not candidates:
             return "未发现套利机会"
@@ -400,7 +434,9 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             estimated_shipping = 50000  # Default shipping estimate
             capital_cost = buy_price * 0.0002 * 3  # 0.02% daily for 3 days
             total_costs = broker_fee + sales_tax + estimated_shipping + capital_cost
-            net_profit = sell_revenue_per_unit - buy_cost_per_unit - estimated_shipping - capital_cost
+            net_profit = (
+                sell_revenue_per_unit - buy_cost_per_unit - estimated_shipping - capital_cost
+            )
             raw_spread = sell_price - buy_price
 
             opp = TradeOpportunity(
@@ -415,10 +451,13 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
                 recommendation_score=c.get("llm_score", 5),
                 risk_level=flag,
                 volume_confidence=min(volume / 100, 1.0),
-                agent_analysis=json_module.dumps({
-                    "mode": "quick_scan",
-                    "trend_analysis": c.get("llm_notes", ""),
-                }, ensure_ascii=False),
+                agent_analysis=json_module.dumps(
+                    {
+                        "mode": "quick_scan",
+                        "trend_analysis": c.get("llm_notes", ""),
+                    },
+                    ensure_ascii=False,
+                ),
                 cost_breakdown={
                     "buy_price": buy_price,
                     "sell_price": sell_price,
@@ -444,13 +483,12 @@ async def _async_detect_opportunities(session_factory, region_id: int, min_profi
             saved += 1
 
         # 对 top 3 green 机会触发深度分析
-        green_opportunities = [
-            o for o in saved_opportunities if o.status == "pending_analysis"
-        ]
+        green_opportunities = [o for o in saved_opportunities if o.status == "pending_analysis"]
         green_opportunities.sort(key=lambda o: -(o.recommendation_score or 0))
         for opp in green_opportunities[:3]:
             try:
                 from app.tasks.deep_analysis import deep_analysis
+
                 deep_analysis.delay(str(opp.id))
                 print(f"[DeepAnalysis] 触发深度分析: {opp.type_id}")
             except Exception as e:
