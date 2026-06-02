@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
@@ -37,8 +38,13 @@ async def sde_status(
 @router.post("/sde/import")
 async def trigger_sde_import(_: str = Depends(get_current_user)):
     from app.tasks.sde_update import import_sde_from_ccp
+
     task = import_sde_from_ccp.delay(force=True)
-    return {"task_id": task.id, "status": "queued", "message": "SDE import started. This may take a few minutes."}
+    return {
+        "task_id": task.id,
+        "status": "queued",
+        "message": "SDE import started. This may take a few minutes.",
+    }
 
 
 @router.get("/rag/status")
@@ -46,7 +52,6 @@ async def rag_status(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    from app.models.rag import RagDocument
     total_result = await db.execute(select(func.count(RagDocument.id)))
     embeddings_result = await db.execute(
         select(func.count(RagDocument.id)).where(RagDocument.embedding.isnot(None))
@@ -62,16 +67,148 @@ async def rag_status(
 async def trigger_embeddings(_: str = Depends(get_current_user)):
     from app.rag.loader import generate_embeddings_sync
     import asyncio
+
     asyncio.get_event_loop().run_in_executor(None, generate_embeddings_sync)
     return {"status": "started", "message": "Embedding generation started in background."}
+
+
+# --- RAG Document CRUD ---
+
+
+class RagDocCreate(BaseModel):
+    title: str
+    content: str
+    source: str = "manual"
+    doc_type: str = "wiki"
+    source_url: str | None = None
+    related_item_groups: list[int] | None = None
+    related_items: list[int] | None = None
+    version: str | None = None
+    language: str = "zh"
+    auto_embed: bool = True
+
+
+class RagDocUpdate(BaseModel):
+    title: str | None = None
+    content: str | None = None
+    source: str | None = None
+    doc_type: str | None = None
+    source_url: str | None = None
+    related_item_groups: list[int] | None = None
+    related_items: list[int] | None = None
+    version: str | None = None
+    language: str | None = None
+
+
+@router.post("/rag/documents")
+async def create_rag_document(
+    body: RagDocCreate,
+    _: str = Depends(get_current_user),
+):
+    from app.rag.loader import add_document
+
+    doc = await add_document(
+        title=body.title,
+        content=body.content,
+        source=body.source,
+        doc_type=body.doc_type,
+        source_url=body.source_url,
+        related_item_groups=body.related_item_groups,
+        related_items=body.related_items,
+        version=body.version,
+        language=body.language,
+        auto_embed=body.auto_embed,
+    )
+    return doc
+
+
+@router.get("/rag/documents")
+async def list_rag_documents(
+    doc_type: str | None = Query(None),
+    source: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    _: str = Depends(get_current_user),
+):
+    from app.rag.loader import list_documents
+
+    return await list_documents(
+        doc_type=doc_type,
+        source=source,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.put("/rag/documents/{doc_id}")
+async def update_rag_document(
+    doc_id: str,
+    body: RagDocUpdate,
+    _: str = Depends(get_current_user),
+):
+    from app.rag.loader import update_document
+
+    kwargs = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    updated = await update_document(doc_id, **kwargs)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"status": "updated", "id": doc_id}
+
+
+@router.delete("/rag/documents/{doc_id}")
+async def delete_rag_document(
+    doc_id: str,
+    _: str = Depends(get_current_user),
+):
+    from app.rag.loader import delete_document
+
+    deleted = await delete_document(doc_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"status": "deleted", "id": doc_id}
+
+
+@router.post("/rag/documents/{doc_id}/reembed")
+async def reembed_rag_document(
+    doc_id: str,
+    _: str = Depends(get_current_user),
+):
+    import uuid
+
+    async with async_session() as db:
+        result = await db.execute(select(RagDocument).where(RagDocument.id == uuid.UUID(doc_id)))
+        doc = result.scalar_one_or_none()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        doc.embedding = None
+        await db.commit()
+
+    from app.rag.loader import generate_embeddings_sync
+    import asyncio
+
+    asyncio.get_event_loop().run_in_executor(None, generate_embeddings_sync)
+    return {"status": "reembedding", "id": doc_id}
+
+
+# --- Notifications ---
 
 
 @router.get("/notifications/status")
 async def notification_status(_: str = Depends(get_current_user)):
     return {
         "in_app": {"enabled": True, "description": "站内推送"},
-        "email": {"enabled": bool(settings.smtp_host), "description": "邮件通知", "config": "SMTP_HOST"},
-        "discord": {"enabled": bool(settings.discord_webhook_url), "description": "Discord Webhook", "config": "DISCORD_WEBHOOK_URL"},
+        "email": {
+            "enabled": bool(settings.smtp_host),
+            "description": "邮件通知",
+            "config": "SMTP_HOST",
+        },
+        "discord": {
+            "enabled": bool(settings.discord_webhook_url),
+            "description": "Discord Webhook",
+            "config": "DISCORD_WEBHOOK_URL",
+        },
     }
 
 
@@ -82,11 +219,19 @@ async def test_notification(
     user_id: str = Depends(get_current_user),
 ):
     from app.tools.notifier import create_notification
+
     await create_notification(
-        db, user_id, "test", "测试通知",
-        f"这是一条来自 {channel} 渠道的测试通知。", channel=channel,
+        db,
+        user_id,
+        "test",
+        "测试通知",
+        f"这是一条来自 {channel} 渠道的测试通知。",
+        channel=channel,
     )
     return {"status": "sent", "channel": channel}
+
+
+# --- Trades ---
 
 
 @router.post("/trades/sync")
@@ -109,17 +254,3 @@ async def trigger_trade_sync(user_id: str = Depends(get_current_user)):
             sync_character_trades.delay(char.character_id)
 
         return {"status": "syncing", "message": f"正在同步 {len(chars)} 个角色的交易记录"}
-
-
-@router.post("/notifications/test")
-async def test_notification(
-    channel: str = "in_app",
-    db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user),
-):
-    from app.tools.notifier import create_notification
-    await create_notification(
-        db, user_id, "test", "测试通知",
-        f"这是一条来自 {channel} 渠道的测试通知。", channel=channel,
-    )
-    return {"status": "sent", "channel": channel}

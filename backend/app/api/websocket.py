@@ -36,8 +36,13 @@ async def websocket_endpoint(ws: WebSocket):
                     event_seq.setdefault(session_id, 0)
                     await ws.send_json({"type": "auth_ok", "session_id": session_id})
                 except ValueError:
-                    await ws.send_json({"type": "error", "code": "auth_failed",
-                                        "message": "Invalid or expired token"})
+                    await ws.send_json(
+                        {
+                            "type": "error",
+                            "code": "auth_failed",
+                            "message": "Invalid or expired token",
+                        }
+                    )
 
             elif msg_type == "chat.message" and user_id:
                 await _handle_chat_message(ws, user_id, session_id, msg)
@@ -55,19 +60,25 @@ async def websocket_endpoint(ws: WebSocket):
                 event_seq[session_id] = max(e.get("seq", 0) for e in buffer) if buffer else 0
 
             elif msg_type == "opportunity.action" and user_id:
-                await ws.send_json({
-                    "type": "opportunity.updated",
-                    "opportunity_id": msg.get("opportunity_id"),
-                    "status": msg.get("action"),
-                })
+                await ws.send_json(
+                    {
+                        "type": "opportunity.updated",
+                        "opportunity_id": msg.get("opportunity_id"),
+                        "status": msg.get("action"),
+                    }
+                )
 
             elif msg_type == "scan.request" and user_id:
                 scan_id = msg.get("scan_id", "manual")
-                await ws.send_json({
-                    "type": "scan.progress", "scan_id": scan_id,
-                    "status": "started", "progress_pct": 0,
-                    "message": "扫描已提交，等待执行...",
-                })
+                await ws.send_json(
+                    {
+                        "type": "scan.progress",
+                        "scan_id": scan_id,
+                        "status": "started",
+                        "progress_pct": 0,
+                        "message": "扫描已提交，等待执行...",
+                    }
+                )
 
     except WebSocketDisconnect:
         pass
@@ -86,6 +97,7 @@ async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg
         from app.database import async_session
         from app.models.rag import UserSettings
         from sqlalchemy import select
+
         async with async_session() as db:
             result = await db.execute(
                 select(UserSettings).where(UserSettings.user_id == uuid.UUID(user_id))
@@ -98,6 +110,7 @@ async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg
                 elif stored_key:
                     try:
                         from app.services.encryption import decrypt_token
+
                         llm_api_key = decrypt_token(stored_key)
                     except Exception:
                         llm_api_key = stored_key
@@ -105,7 +118,9 @@ async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg
     except Exception:
         pass
 
-    context = AgentContext(user_id=user_id, session_id=session_id, llm_api_key=llm_api_key, llm_provider=llm_provider)
+    context = AgentContext(
+        user_id=user_id, session_id=session_id, llm_api_key=llm_api_key, llm_provider=llm_provider
+    )
 
     # Step 1: OrchestratorAgent - classify intent and build pipeline
     orchestrator = OrchestratorAgent()
@@ -118,42 +133,68 @@ async def _handle_chat_message(ws: WebSocket, user_id: str, session_id: str, msg
     # Run AnalystAgent if intent is analysis
     if "analyst" in pipeline:
         from app.agents.analyst import AnalystAgent
+        from app.rag.retriever import hybrid_search, format_rag_context
+
         analyst = AnalystAgent()
-        # Extract type_id from message if available (simplified)
-        analysis_result = await analyst.run(context, {
-            "message": message,
-            "indicators": {},
-            "rag_context": "",
-        })
+        # RAG retrieval for knowledge context
+        rag_context = ""
+        try:
+            from app.database import async_session
+
+            async with async_session() as rag_db:
+                rag_results = await hybrid_search(rag_db, message, top_k=3, enable_rewrite=True)
+                rag_context = format_rag_context(rag_results)
+        except Exception:
+            pass
+        analysis_result = await analyst.run(
+            context,
+            {
+                "message": message,
+                "indicators": {},
+                "rag_context": rag_context,
+            },
+        )
 
     # Run MemoryAgent if intent is memory/history
     if "memory" in pipeline:
         from app.agents.memory import MemoryAgent
+
         memory = MemoryAgent()
-        memory_result = await memory.run(context, {
-            "action": "update_profile",
-            "trade_history": [],
-            "feedback": [],
-        })
+        memory_result = await memory.run(
+            context,
+            {
+                "action": "update_profile",
+                "trade_history": [],
+                "feedback": [],
+            },
+        )
         analysis_result["memory"] = memory_result
 
     # Step 3: AdvisorAgent - generate final response
     advisor = AdvisorAgent()
-    result = await advisor.run(context, {
-        "message": message,
-        "analysis": route,
-        "analyst_result": analysis_result,
-    })
+    result = await advisor.run(
+        context,
+        {
+            "message": message,
+            "analysis": route,
+            "analyst_result": analysis_result,
+        },
+    )
 
     response_text = result.get("response", "")
     seq = event_seq.get(session_id, 0)
 
     chunk_size = 50
     for i, char_start in enumerate(range(0, len(response_text), chunk_size)):
-        chunk = response_text[char_start:char_start + chunk_size]
+        chunk = response_text[char_start : char_start + chunk_size]
         seq += 1
-        event = {"type": "chat.chunk", "session_id": session_id,
-                 "content": chunk, "seq": seq, "index": i}
+        event = {
+            "type": "chat.chunk",
+            "session_id": session_id,
+            "content": chunk,
+            "seq": seq,
+            "index": i,
+        }
         await ws.send_json(event)
         _buffer_event(session_id, event)
         await asyncio.sleep(0.02)
